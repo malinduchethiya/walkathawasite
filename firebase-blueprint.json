@@ -1,0 +1,370 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public author profile data without personally identifiable information.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth user ID matching the document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Public author display name."
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique author handle."
+        },
+        "bio": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280,
+          "description": "Short author biography."
+        },
+        "photoURL": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Optional public avatar URL."
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Whether the author profile is verified."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "handle",
+        "bio",
+        "photoURL",
+        "isVerified",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Isolated private account details containing PII accessible only by the owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth user ID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Authenticated user email address."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last private record update."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "A published or draft story displayed in the 4-column card grid.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Story title."
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 320,
+          "description": "Short summary displayed on the grid card."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Drama",
+            "Mystery",
+            "Sci-Fi",
+            "Folklore",
+            "Slice of Life",
+            "Poetry",
+            "Adventure",
+            "Romance"
+          ],
+          "description": "Story category shown in the top badge."
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Author Firebase Auth UID."
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Denormalized author display name."
+        },
+        "authorPhotoURL": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Denormalized author avatar URL."
+        },
+        "authorVerified": {
+          "type": "boolean",
+          "description": "Whether the author has a verified badge."
+        },
+        "views": {
+          "type": "integer",
+          "description": "Total story views."
+        },
+        "chapterCount": {
+          "type": "integer",
+          "description": "Total number of chapters/parts in this story."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published"],
+          "description": "Publication visibility state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of publication."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "title",
+        "excerpt",
+        "category",
+        "authorId",
+        "authorName",
+        "authorPhotoURL",
+        "authorVerified",
+        "views",
+        "chapterCount",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryChapter": {
+      "title": "StoryChapter",
+      "description": "An individual chapter/part component belonging to a story.",
+      "type": "object",
+      "properties": {
+        "storyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent story document ID."
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent story author UID."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published"],
+          "description": "Mirrored publication state for secure O(1) list queries."
+        },
+        "chapterNumber": {
+          "type": "integer",
+          "description": "1-based sequential chapter index."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "Chapter heading."
+        },
+        "content": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 25000,
+          "description": "Full text content of the chapter."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when chapter was added."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when chapter was updated."
+        }
+      },
+      "required": [
+        "storyId",
+        "authorId",
+        "status",
+        "chapterNumber",
+        "title",
+        "content",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryComment": {
+      "title": "StoryComment",
+      "description": "A reader comment attached to a published story.",
+      "type": "object",
+      "properties": {
+        "storyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent story document ID."
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Comment author UID."
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Comment author display name."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Comment body text."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["visible"],
+          "description": "Visibility state for secure list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when comment was created."
+        }
+      },
+      "required": [
+        "storyId",
+        "authorId",
+        "authorName",
+        "body",
+        "status",
+        "createdAt"
+      ]
+    },
+    "UserBookmark": {
+      "title": "UserBookmark",
+      "description": "A saved story bookmark owned by a user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "storyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Bookmarked story ID."
+        },
+        "storyTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "Snapshot of story title."
+        },
+        "storyCategory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Snapshot of story category."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when bookmarked."
+        }
+      },
+      "required": ["uid", "storyId", "storyTitle", "storyCategory", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public author profiles (zero PII)."
+    },
+    "/userPrivate/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Owner-only private user account records containing email PII."
+    },
+    "/users/{userId}/bookmarks/{storyId}": {
+      "schema": { "$ref": "#/entities/UserBookmark" },
+      "description": "Owner-only saved story bookmarks."
+    },
+    "/stories/{storyId}": {
+      "schema": { "$ref": "#/entities/Story" },
+      "description": "Stories displayed in the 4-column card grid."
+    },
+    "/stories/{storyId}/chapters/{chapterId}": {
+      "schema": { "$ref": "#/entities/StoryChapter" },
+      "description": "Ordered chapters/parts belonging to a story."
+    },
+    "/stories/{storyId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/StoryComment" },
+      "description": "Reader comments attached to published stories."
+    }
+  }
+}

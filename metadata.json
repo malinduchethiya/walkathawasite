@@ -1,0 +1,6 @@
+{
+  "name": "KathaGrid",
+  "description": "A clean, minimal story reading and publishing platform backed by Firebase Authentication and Firestore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

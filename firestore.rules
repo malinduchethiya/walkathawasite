@@ -1,0 +1,389 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Security Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidCategory(category) {
+      return category is string && category in [
+        'Drama',
+        'Mystery',
+        'Sci-Fi',
+        'Folklore',
+        'Slice of Life',
+        'Poetry',
+        'Adventure',
+        'Romance'
+      ];
+    }
+
+    function isValidStatus(status) {
+      return status is string && status in ['draft', 'published'];
+    }
+
+    function parentStory(storyId) {
+      return get(/databases/$(database)/documents/stories/$(storyId)).data;
+    }
+
+    function parentStoryAfter(storyId) {
+      return getAfter(/databases/$(database)/documents/stories/$(storyId)).data;
+    }
+
+    // --- Validation Blueprints (Synchronized verbatim with firebase-blueprint.json) ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'handle',
+          'bio',
+          'photoURL',
+          'isVerified',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'handle',
+          'bio',
+          'photoURL',
+          'isVerified',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
+        && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 32 && data.handle.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.bio is string && data.bio.size() <= 280
+        && data.photoURL is string && data.photoURL.size() <= 500
+        && data.isVerified is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBookmark(data, userId, storyId) {
+      return data.keys().hasAll(['uid', 'storyId', 'storyTitle', 'storyCategory', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'storyId', 'storyTitle', 'storyCategory', 'createdAt'])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid && isValidId(data.uid)
+        && data.storyId is string && data.storyId == storyId && isValidId(data.storyId)
+        && data.storyTitle is string && data.storyTitle.size() >= 1 && data.storyTitle.size() <= 140
+        && data.storyCategory is string && data.storyCategory.size() >= 1 && data.storyCategory.size() <= 40
+        && data.createdAt is timestamp;
+    }
+
+    function isValidStory(data) {
+      return data.keys().hasAll([
+          'title',
+          'excerpt',
+          'category',
+          'authorId',
+          'authorName',
+          'authorPhotoURL',
+          'authorVerified',
+          'views',
+          'chapterCount',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title',
+          'excerpt',
+          'category',
+          'authorId',
+          'authorName',
+          'authorPhotoURL',
+          'authorVerified',
+          'views',
+          'chapterCount',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
+        && data.excerpt is string && data.excerpt.size() >= 10 && data.excerpt.size() <= 320
+        && isValidCategory(data.category)
+        && data.authorId is string && isValidId(data.authorId)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && data.authorPhotoURL is string && data.authorPhotoURL.size() <= 500
+        && data.authorVerified is bool
+        && data.views is int && data.views >= 0 && data.views <= 100000000
+        && data.chapterCount is int && data.chapterCount >= 1 && data.chapterCount <= 200
+        && isValidStatus(data.status)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChapter(data, storyId) {
+      return data.keys().hasAll([
+          'storyId',
+          'authorId',
+          'status',
+          'chapterNumber',
+          'title',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'storyId',
+          'authorId',
+          'status',
+          'chapterNumber',
+          'title',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.storyId is string && data.storyId == storyId && isValidId(data.storyId)
+        && data.authorId is string && isValidId(data.authorId)
+        && isValidStatus(data.status)
+        && data.chapterNumber is int && data.chapterNumber >= 1 && data.chapterNumber <= 200
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.content is string && data.content.size() >= 20 && data.content.size() <= 25000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidComment(data, storyId) {
+      return data.keys().hasAll(['storyId', 'authorId', 'authorName', 'body', 'status', 'createdAt'])
+        && data.keys().hasOnly(['storyId', 'authorId', 'authorName', 'body', 'status', 'createdAt'])
+        && data.storyId is string && data.storyId == storyId && isValidId(data.storyId)
+        && data.authorId is string && data.authorId == request.auth.uid && isValidId(data.authorId)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 1000
+        && data.status is string && data.status == 'visible'
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection 1: Public Author Profiles (Zero PII) ---
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().isVerified == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().isVerified == existing().isVerified
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName',
+          'handle',
+          'bio',
+          'photoURL',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+
+      // Subcollection: Owner-only Saved Story Bookmarks
+      match /bookmarks/{storyId} {
+        allow get: if isValidId(userId) && isValidId(storyId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().uid == request.auth.uid;
+        allow create: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(storyId)
+          && isOwner(userId)
+          && isValidBookmark(incoming(), userId, storyId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if false;
+        allow delete: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(storyId)
+          && isOwner(userId)
+          && exists(/databases/$(database)/documents/users/$(userId));
+      }
+    }
+
+    // --- Collection 2: Private User PII (Strict Owner Isolation) ---
+    match /userPrivate/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserPrivate(incoming(), userId)
+        && incoming().email == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserPrivate(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().email == request.auth.token.email
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // --- Collection 3: Stories ---
+    match /stories/{storyId} {
+      allow get: if isValidId(storyId)
+        && (existing().status == 'published' || (isSignedIn() && existing().authorId == request.auth.uid));
+      allow list: if existing().status == 'published'
+        || (isSignedIn() && existing().authorId == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(storyId)
+        && isValidStory(incoming())
+        && incoming().authorId == request.auth.uid
+        && incoming().views == 0
+        && incoming().authorVerified == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isVerifiedUser()
+        && isValidId(storyId)
+        && isValidStory(incoming())
+        && incoming().authorId == existing().authorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().authorVerified == existing().authorVerified
+        && (
+          // Action 1: Author edits story metadata or publication status
+          (
+            existing().authorId == request.auth.uid
+            && incoming().views == existing().views
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'excerpt',
+              'category',
+              'authorName',
+              'authorPhotoURL',
+              'chapterCount',
+              'status',
+              'updatedAt'
+            ])
+          )
+          ||
+          // Action 2: Verified reader increments view count by exactly 1
+          (
+            existing().status == 'published'
+            && incoming().views == existing().views + 1
+            && incoming().updatedAt == existing().updatedAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['views'])
+          )
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(storyId)
+        && existing().authorId == request.auth.uid;
+
+      // Subcollection: Story Chapters / Parts
+      match /chapters/{chapterId} {
+        allow get: if isValidId(storyId)
+          && isValidId(chapterId)
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && (
+            parentStory(storyId).status == 'published'
+            || (isSignedIn() && parentStory(storyId).authorId == request.auth.uid)
+          );
+        allow list: if existing().status == 'published'
+          || (isSignedIn() && existing().authorId == request.auth.uid);
+        allow create: if isVerifiedUser()
+          && isValidId(storyId)
+          && isValidId(chapterId)
+          && isValidChapter(incoming(), storyId)
+          && incoming().authorId == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/stories/$(storyId))
+          && parentStoryAfter(storyId).authorId == request.auth.uid
+          && incoming().status == parentStoryAfter(storyId).status;
+        allow update: if isVerifiedUser()
+          && isValidId(storyId)
+          && isValidId(chapterId)
+          && isValidChapter(incoming(), storyId)
+          && incoming().storyId == existing().storyId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && parentStory(storyId).authorId == request.auth.uid
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'chapterNumber',
+            'title',
+            'content',
+            'status',
+            'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser()
+          && isValidId(storyId)
+          && isValidId(chapterId)
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && parentStory(storyId).authorId == request.auth.uid;
+      }
+
+      // Subcollection: Story Comments
+      match /comments/{commentId} {
+        allow get: if isValidId(storyId)
+          && isValidId(commentId)
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && parentStory(storyId).status == 'published';
+        allow list: if existing().status == 'visible';
+        allow create: if isVerifiedUser()
+          && isValidId(storyId)
+          && isValidId(commentId)
+          && isValidComment(incoming(), storyId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && parentStory(storyId).status == 'published';
+        allow update: if false;
+        allow delete: if isVerifiedUser()
+          && isValidId(storyId)
+          && isValidId(commentId)
+          && exists(/databases/$(database)/documents/stories/$(storyId))
+          && (
+            existing().authorId == request.auth.uid
+            || parentStory(storyId).authorId == request.auth.uid
+          );
+      }
+    }
+  }
+}
