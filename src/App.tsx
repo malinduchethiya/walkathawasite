@@ -13,19 +13,26 @@ import {
   deleteStoryWithChapters,
   subscribeCategories,
   subscribePublishedStories,
+  subscribeSiteSeoSettings,
   subscribeUserBookmarks,
   subscribeUserStories,
   toggleUserBookmark,
 } from './firebase/repository';
 import type {
   CategoryRecord,
+  SiteSeoSettings,
   SortOption,
   Story,
   StoryCategory,
   StoryChapter,
   UserBookmark,
 } from './types/story';
-import { filterAndSortStories, mergeCategories } from './utils/storyUtils';
+import {
+  DEFAULT_SEO_SETTINGS,
+  applySeoSettingsToDocument,
+  filterAndSortStories,
+  mergeCategories,
+} from './utils/storyUtils';
 
 const GUEST_BOOKMARKS_KEY = 'walkathawa_guest_bookmarks';
 
@@ -54,6 +61,7 @@ function WalkathawaApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [firebaseStories, setFirebaseStories] = useState<Story[]>([]);
   const [customCategories, setCustomCategories] = useState<CategoryRecord[]>([]);
+  const [seoSettings, setSeoSettings] = useState<SiteSeoSettings>(DEFAULT_SEO_SETTINGS);
   const [userStories, setUserStories] = useState<Story[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -108,6 +116,15 @@ function WalkathawaApp() {
         // Non-blocking fallback to default categories if /categories is unavailable
       }
     );
+    return () => unsubscribe();
+  }, []);
+
+  // Live subscription to Firestore /siteSettings/seo document -> syncs <head> meta keywords, title & description
+  useEffect(() => {
+    const unsubscribe = subscribeSiteSeoSettings((settings) => {
+      setSeoSettings(settings);
+      applySeoSettingsToDocument(settings);
+    });
     return () => unsubscribe();
   }, []);
 
@@ -247,6 +264,7 @@ function WalkathawaApp() {
     return (
       <AdminPanel
         customCategories={customCategories}
+        seoSettings={seoSettings}
         onExitAdmin={exitAdminRoute}
       />
     );

@@ -1,6 +1,7 @@
 import {
   STORY_CATEGORIES,
   type CategoryRecord,
+  type SiteSeoSettings,
   type SortOption,
   type Story,
   type StoryCategory,
@@ -8,6 +9,14 @@ import {
 } from '../types/story';
 
 export const ADMIN_EMAIL = 'merlinfiverr0@gmail.com';
+
+export const DEFAULT_SEO_SETTINGS: SiteSeoSettings = {
+  siteTitle: 'walkathawa — Sinhala & English Stories',
+  metaDescription:
+    'walkathawa — Read and publish original Sinhala and English serial stories, drama, mystery, and folklore from Sri Lanka.',
+  keywords:
+    'walkathawa, sinhala katha, සිංහල කතා, sri lanka stories, sinhala short stories, serial fiction, drama, mystery, folklore',
+};
 
 // Verbatim constraints synchronized with firebase-blueprint.json & firestore.rules
 export const BLUEPRINT_LIMITS = {
@@ -36,6 +45,12 @@ export const BLUEPRINT_LIMITS = {
   CHAPTER_MAX_COUNT: 200,
   COMMENT_MIN: 1,
   COMMENT_MAX: 1000,
+  SEO_TITLE_MIN: 1,
+  SEO_TITLE_MAX: 140,
+  SEO_DESCRIPTION_MIN: 1,
+  SEO_DESCRIPTION_MAX: 320,
+  SEO_KEYWORDS_MIN: 1,
+  SEO_KEYWORDS_MAX: 2000,
 } as const;
 
 export function isAdminAccount(
@@ -111,6 +126,85 @@ export function mergeCategories(
   }
 
   return Array.from(seen.values());
+}
+
+export function parseSeoKeywords(raw: string): string[] {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const part of raw.split(',')) {
+    const cleaned = part.trim().replace(/\s+/g, ' ');
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      list.push(cleaned);
+    }
+  }
+  return list;
+}
+
+export function normalizeSeoKeywords(raw: string): string {
+  return parseSeoKeywords(raw).join(', ').slice(0, BLUEPRINT_LIMITS.SEO_KEYWORDS_MAX);
+}
+
+export function validateSeoInput(input: {
+  siteTitle: string;
+  metaDescription: string;
+  keywords: string;
+}): string[] {
+  const errors: string[] = [];
+  const title = input.siteTitle.trim();
+  const desc = input.metaDescription.trim();
+  const normalizedKeywords = normalizeSeoKeywords(input.keywords);
+
+  if (
+    title.length < BLUEPRINT_LIMITS.SEO_TITLE_MIN ||
+    title.length > BLUEPRINT_LIMITS.SEO_TITLE_MAX
+  ) {
+    errors.push(`Site title must be between 1 and ${BLUEPRINT_LIMITS.SEO_TITLE_MAX} characters.`);
+  }
+  if (
+    desc.length < BLUEPRINT_LIMITS.SEO_DESCRIPTION_MIN ||
+    desc.length > BLUEPRINT_LIMITS.SEO_DESCRIPTION_MAX
+  ) {
+    errors.push(
+      `Meta description must be between 1 and ${BLUEPRINT_LIMITS.SEO_DESCRIPTION_MAX} characters.`
+    );
+  }
+  if (
+    normalizedKeywords.length < BLUEPRINT_LIMITS.SEO_KEYWORDS_MIN ||
+    normalizedKeywords.length > BLUEPRINT_LIMITS.SEO_KEYWORDS_MAX
+  ) {
+    errors.push(
+      `Enter at least one SEO keyword (up to ${BLUEPRINT_LIMITS.SEO_KEYWORDS_MAX} characters, separated by commas).`
+    );
+  }
+  return errors;
+}
+
+export function applySeoSettingsToDocument(settings: SiteSeoSettings): void {
+  if (typeof document === 'undefined') return;
+
+  const title = settings.siteTitle.trim() || DEFAULT_SEO_SETTINGS.siteTitle;
+  const description = settings.metaDescription.trim() || DEFAULT_SEO_SETTINGS.metaDescription;
+  const keywords = normalizeSeoKeywords(settings.keywords) || DEFAULT_SEO_SETTINGS.keywords;
+
+  document.title = title;
+
+  const upsertMeta = (attr: 'name' | 'property', key: string, content: string) => {
+    let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`);
+    if (!el) {
+      el = document.createElement('meta');
+      el.setAttribute(attr, key);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('content', content);
+  };
+
+  upsertMeta('name', 'description', description);
+  upsertMeta('name', 'keywords', keywords);
+  upsertMeta('property', 'og:title', title);
+  upsertMeta('property', 'og:description', description);
 }
 
 export function formatCompactViews(views: number): string {

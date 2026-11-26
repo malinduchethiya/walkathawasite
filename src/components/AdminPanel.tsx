@@ -17,6 +17,7 @@ import {
   createCategoryRecord,
   deleteCategoryRecord,
   fetchStoryChaptersForAdmin,
+  saveSiteSeoSettings,
   subscribeAllStoriesForAdmin,
   updateCategoryRecord,
 } from '../firebase/repository';
@@ -24,6 +25,7 @@ import {
   STORY_CATEGORIES,
   type CategoryRecord,
   type ChapterDraftInput,
+  type SiteSeoSettings,
   type Story,
   type StoryStatus,
 } from '../types/story';
@@ -35,17 +37,20 @@ import {
   isSafeImageUrl,
   mergeCategories,
   normalizeCategoryName,
+  parseSeoKeywords,
+  validateSeoInput,
   validateStoryInput,
 } from '../utils/storyUtils';
 
 interface AdminPanelProps {
   customCategories: CategoryRecord[];
+  seoSettings: SiteSeoSettings;
   onExitAdmin: () => void;
 }
 
-type AdminTab = 'stories' | 'categories';
+type AdminTab = 'stories' | 'categories' | 'seo';
 
-export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
+export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: AdminPanelProps) {
   const {
     user,
     isAdmin,
@@ -102,6 +107,23 @@ export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [confirmDeleteCatId, setConfirmDeleteCatId] = useState<string | null>(null);
+
+  // SEO manager state
+  const [seoTitle, setSeoTitle] = useState(seoSettings.siteTitle);
+  const [seoDescription, setSeoDescription] = useState(seoSettings.metaDescription);
+  const [seoKeywordsInput, setSeoKeywordsInput] = useState(seoSettings.keywords);
+  const [savingSeo, setSavingSeo] = useState(false);
+
+  useEffect(() => {
+    setSeoTitle(seoSettings.siteTitle);
+    setSeoDescription(seoSettings.metaDescription);
+    setSeoKeywordsInput(seoSettings.keywords);
+  }, [seoSettings.siteTitle, seoSettings.metaDescription, seoSettings.keywords]);
+
+  const parsedSeoKeywordList = useMemo(
+    () => parseSeoKeywords(seoKeywordsInput),
+    [seoKeywordsInput]
+  );
 
   useEffect(() => {
     if (!authReady || !isAdmin) {
@@ -386,6 +408,40 @@ export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
       setAdminNotice('Custom category deleted from Firestore.');
     } catch (err) {
       setAdminError(err instanceof Error ? err.message : 'Unable to delete category.');
+    }
+  };
+
+  const handleSaveSeo = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setAdminError(null);
+    setAdminNotice(null);
+
+    const validationErrors = validateSeoInput({
+      siteTitle: seoTitle,
+      metaDescription: seoDescription,
+      keywords: seoKeywordsInput,
+    });
+    if (validationErrors.length > 0) {
+      setAdminError(validationErrors[0]);
+      return;
+    }
+
+    setSavingSeo(true);
+    try {
+      const saved = await saveSiteSeoSettings(user, {
+        siteTitle: seoTitle,
+        metaDescription: seoDescription,
+        keywords: seoKeywordsInput,
+      });
+      setSeoKeywordsInput(saved.keywords);
+      setAdminNotice(
+        `SEO settings saved to Firestore (${parseSeoKeywords(saved.keywords).length} keywords active across the site).`
+      );
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Unable to save SEO settings.');
+    } finally {
+      setSavingSeo(false);
     }
   };
 
@@ -1022,6 +1078,19 @@ export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
                 >
                   Categories ({allCategories.length})
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'seo'}
+                  onClick={() => setActiveTab('seo')}
+                  className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                    activeTab === 'seo'
+                      ? 'bg-[#8d64cc] text-white'
+                      : 'bg-[#1d202e] text-[#b2b6c7] hover:text-white'
+                  }`}
+                >
+                  SEO Keywords ({parsedSeoKeywordList.length})
+                </button>
               </div>
 
               {activeTab === 'stories' && (
@@ -1192,7 +1261,7 @@ export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
                   )}
                 </div>
               </section>
-            ) : (
+            ) : activeTab === 'categories' ? (
               /* Categories Manager Tab */
               <section className="max-w-3xl space-y-6">
                 <form
@@ -1343,6 +1412,117 @@ export function AdminPanel({ customCategories, onExitAdmin }: AdminPanelProps) {
                     })}
                   </div>
                 </div>
+              </section>
+            ) : (
+              /* SEO Keywords & Metadata Slot */
+              <section className="max-w-3xl">
+                <form
+                  onSubmit={(e) => void handleSaveSeo(e)}
+                  noValidate
+                  className="bg-[#1d202e] rounded-xl p-6 space-y-5"
+                >
+                  <div>
+                    <h2 className="text-base font-semibold text-white">
+                      Site SEO Keywords &amp; Meta Tags
+                    </h2>
+                    <p className="mt-1 text-xs text-[#9ea4b8]">
+                      Enter your SEO keywords separated by commas. Saving updates Firestore and
+                      applies the keywords live to the site&apos;s{' '}
+                      <code className="text-[#d5d9e6]">&lt;meta name=&quot;keywords&quot;&gt;</code>,{' '}
+                      <code className="text-[#d5d9e6]">&lt;title&gt;</code>, and description tags.
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="admin-seo-keywords" className="text-xs font-medium text-[#c2c6d4]">
+                        SEO Keywords (Comma-Separated)
+                      </label>
+                      <span className="text-xs text-[#8c92a6] tabular-nums">
+                        {parsedSeoKeywordList.length}{' '}
+                        {parsedSeoKeywordList.length === 1 ? 'keyword' : 'keywords'} ·{' '}
+                        {seoKeywordsInput.length}/{BLUEPRINT_LIMITS.SEO_KEYWORDS_MAX}
+                      </span>
+                    </div>
+                    <textarea
+                      id="admin-seo-keywords"
+                      rows={5}
+                      maxLength={BLUEPRINT_LIMITS.SEO_KEYWORDS_MAX}
+                      value={seoKeywordsInput}
+                      onChange={(e) => setSeoKeywordsInput(e.target.value)}
+                      placeholder="walkathawa, sinhala katha, සිංහල කතා, new stories, ..."
+                      className="w-full bg-[#141621] text-sm text-white placeholder-[#7f859b] px-3.5 py-3 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none leading-relaxed resize-y"
+                    />
+                  </div>
+
+                  {parsedSeoKeywordList.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-[#9ea4b8] mb-2">
+                        Parsed Keywords Preview ({parsedSeoKeywordList.length})
+                      </p>
+                      <div className="bg-[#141621] border border-[#262a3d] rounded-lg p-3 flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
+                        {parsedSeoKeywordList.map((kw) => (
+                          <span
+                            key={kw}
+                            className="px-2.5 py-1 text-xs bg-[#1d202e] text-[#d5d9e6] border border-[#2d3248] rounded-md"
+                          >
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="admin-seo-title" className="text-xs font-medium text-[#c2c6d4]">
+                        Site Title (&lt;title&gt; &amp; og:title)
+                      </label>
+                      <span className="text-xs text-[#8c92a6] tabular-nums">
+                        {seoTitle.length}/{BLUEPRINT_LIMITS.SEO_TITLE_MAX}
+                      </span>
+                    </div>
+                    <input
+                      id="admin-seo-title"
+                      type="text"
+                      maxLength={BLUEPRINT_LIMITS.SEO_TITLE_MAX}
+                      value={seoTitle}
+                      onChange={(e) => setSeoTitle(e.target.value)}
+                      placeholder="walkathawa — Sinhala & English Stories"
+                      className="w-full bg-[#141621] text-sm text-white placeholder-[#7f859b] px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="admin-seo-description" className="text-xs font-medium text-[#c2c6d4]">
+                        Meta Description (&lt;meta name=&quot;description&quot;&gt;)
+                      </label>
+                      <span className="text-xs text-[#8c92a6] tabular-nums">
+                        {seoDescription.length}/{BLUEPRINT_LIMITS.SEO_DESCRIPTION_MAX}
+                      </span>
+                    </div>
+                    <textarea
+                      id="admin-seo-description"
+                      rows={3}
+                      maxLength={BLUEPRINT_LIMITS.SEO_DESCRIPTION_MAX}
+                      value={seoDescription}
+                      onChange={(e) => setSeoDescription(e.target.value)}
+                      placeholder="Enter site meta description..."
+                      className="w-full bg-[#141621] text-sm text-white placeholder-[#7f859b] px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none resize-y"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end pt-2">
+                    <button
+                      type="submit"
+                      disabled={savingSeo}
+                      className="px-5 py-2.5 text-xs font-medium bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {savingSeo ? 'Saving SEO...' : 'Save & Apply SEO Keywords'}
+                    </button>
+                  </div>
+                </form>
               </section>
             )}
           </>

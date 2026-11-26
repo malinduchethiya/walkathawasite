@@ -24,6 +24,14 @@ export interface CategoryRecord {
   updatedAtMs: number;
 }
 
+export interface SiteSeoSettings {
+  siteTitle: string;
+  metaDescription: string;
+  keywords: string;
+  updatedBy?: string;
+  updatedAtMs?: number;
+}
+
 export interface UserProfile {
   uid: string;
   displayName: string;

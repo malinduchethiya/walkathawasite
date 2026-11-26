@@ -303,3 +303,28 @@ test('validateStoryInput accepts custom categories and rejects unsafe image URLs
   assert.equal(bad.length, 2);
 });
 
+test('parseSeoKeywords, normalizeSeoKeywords, and validateSeoInput handle comma-separated keywords', async () => {
+  const { parseSeoKeywords, normalizeSeoKeywords, validateSeoInput } = await import('./storyUtils');
+
+  const list = parseSeoKeywords(' walkathawa , sinhala katha , සිංහල කතා, WALKATHAWA ,  , drama ');
+  assert.deepEqual(list, ['walkathawa', 'sinhala katha', 'සිංහල කතා', 'drama']);
+
+  const normalized = normalizeSeoKeywords('walkathawa,  sinhala katha , drama');
+  assert.equal(normalized, 'walkathawa, sinhala katha, drama');
+
+  const ok = validateSeoInput({
+    siteTitle: 'walkathawa — Sinhala Stories',
+    metaDescription: 'Read and publish Sinhala and English stories.',
+    keywords: 'walkathawa, sinhala katha, drama',
+  });
+  assert.deepEqual(ok, []);
+
+  const emptyKeywords = validateSeoInput({
+    siteTitle: 'walkathawa',
+    metaDescription: 'Description',
+    keywords: ' , , ',
+  });
+  assert.equal(emptyKeywords.length, 1);
+});
+
+

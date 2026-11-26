@@ -70,6 +70,8 @@ test('Admin RBAC, custom categories, and image URL scheme validation are enforce
   assert.match(rules, /match\s*\/admins\/\{adminId\}/);
   assert.match(rules, /allow create, update, delete:\s*if\s*false;/);
   assert.match(rules, /match\s*\/categories\/\{categoryId\}/);
+  assert.match(rules, /match\s*\/siteSettings\/\{settingId\}/);
+  assert.match(rules, /function isValidSiteSeoSettings\(data\)/);
   assert.match(rules, /function isValidImageUrl\(url\)/);
   assert.match(rules, /url\.matches\('\^https:\/\/\.\*'\)/);
 });

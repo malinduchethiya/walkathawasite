@@ -127,6 +127,16 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSiteSeoSettings(data) {
+      return data.keys().hasAll(['siteTitle', 'metaDescription', 'keywords', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['siteTitle', 'metaDescription', 'keywords', 'updatedBy', 'updatedAt'])
+        && data.siteTitle is string && data.siteTitle.size() >= 1 && data.siteTitle.size() <= 140
+        && data.metaDescription is string && data.metaDescription.size() >= 1 && data.metaDescription.size() <= 320
+        && data.keywords is string && data.keywords.size() >= 1 && data.keywords.size() <= 2000
+        && data.updatedBy is string && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
     function isValidStory(data) {
       return data.keys().hasAll([
           'title',
@@ -221,6 +231,30 @@ service cloud.firestore {
       allow get: if isValidId(adminId) && isOwner(adminId);
       allow list: if false;
       allow create, update, delete: if false;
+    }
+
+    // --- Collection 0b: Global Site SEO Settings (Public Get, Admin Write) ---
+    match /siteSettings/{settingId} {
+      allow get: if settingId == 'seo';
+      allow list: if false;
+      allow create: if isAdmin()
+        && settingId == 'seo'
+        && isValidSiteSeoSettings(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && settingId == 'seo'
+        && isValidSiteSeoSettings(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'siteTitle',
+          'metaDescription',
+          'keywords',
+          'updatedBy',
+          'updatedAt'
+        ]);
+      allow delete: if false;
     }
 
     // --- Collection 1: Public Author Profiles (Zero PII) ---

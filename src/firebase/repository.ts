@@ -18,6 +18,7 @@ import type { User } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType } from './config';
 import type {
   CategoryRecord,
+  SiteSeoSettings,
   Story,
   StoryChapter,
   StoryComment,
@@ -28,12 +29,15 @@ import type {
 } from '../types/story';
 import {
   BLUEPRINT_LIMITS,
+  DEFAULT_SEO_SETTINGS,
   generateSafeDocId,
   isSafeImageUrl,
   normalizeCategoryName,
+  normalizeSeoKeywords,
   sanitizeHandle,
   slugifyCategory,
   validateProfileInput,
+  validateSeoInput,
   validateStoryInput,
 } from '../utils/storyUtils';
 import { STARTER_STORY_BUNDLES } from '../data/starterStories';
@@ -288,6 +292,73 @@ export async function deleteCategoryRecord(categoryId: string): Promise<void> {
     await deleteDoc(doc(db, 'categories', categoryId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export function subscribeSiteSeoSettings(
+  onData: (settings: SiteSeoSettings) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const path = 'siteSettings/seo';
+  const seoRef = doc(db, 'siteSettings', 'seo');
+  return onSnapshot(
+    seoRef,
+    (snap) => {
+      if (!snap.exists()) {
+        onData(DEFAULT_SEO_SETTINGS);
+        return;
+      }
+      const data = snap.data();
+      onData({
+        siteTitle: String(data.siteTitle ?? DEFAULT_SEO_SETTINGS.siteTitle),
+        metaDescription: String(data.metaDescription ?? DEFAULT_SEO_SETTINGS.metaDescription),
+        keywords: String(data.keywords ?? DEFAULT_SEO_SETTINGS.keywords),
+        updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+        updatedAtMs: toMillis(data.updatedAt),
+      });
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function saveSiteSeoSettings(
+  adminUser: User,
+  input: { siteTitle: string; metaDescription: string; keywords: string }
+): Promise<SiteSeoSettings> {
+  const errors = validateSeoInput(input);
+  if (errors.length > 0) {
+    throw new Error(errors[0]);
+  }
+  const siteTitle = input.siteTitle.trim().slice(0, BLUEPRINT_LIMITS.SEO_TITLE_MAX);
+  const metaDescription = input.metaDescription
+    .trim()
+    .slice(0, BLUEPRINT_LIMITS.SEO_DESCRIPTION_MAX);
+  const keywords = normalizeSeoKeywords(input.keywords);
+  const path = 'siteSettings/seo';
+
+  try {
+    await setDoc(doc(db, 'siteSettings', 'seo'), {
+      siteTitle,
+      metaDescription,
+      keywords,
+      updatedBy: adminUser.uid,
+      updatedAt: serverTimestamp(),
+    });
+    return {
+      siteTitle,
+      metaDescription,
+      keywords,
+      updatedBy: adminUser.uid,
+      updatedAtMs: Date.now(),
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

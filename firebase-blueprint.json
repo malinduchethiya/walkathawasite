@@ -406,6 +406,44 @@
         }
       },
       "required": ["uid", "storyId", "storyTitle", "storyCategory", "createdAt"]
+    },
+    "SiteSeoSettings": {
+      "title": "SiteSeoSettings",
+      "description": "Global site SEO metadata and comma-separated keywords managed from the admin panel.",
+      "type": "object",
+      "properties": {
+        "siteTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "HTML document title and OpenGraph title."
+        },
+        "metaDescription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320,
+          "description": "Meta description and OpenGraph description."
+        },
+        "keywords": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Comma-separated SEO keywords applied to the meta keywords tag."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin UID who last updated the SEO settings."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when SEO settings were last saved."
+        }
+      },
+      "required": ["siteTitle", "metaDescription", "keywords", "updatedBy", "updatedAt"]
     }
   },
   "firestore": {
@@ -424,6 +462,10 @@
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminRecord" },
       "description": "Read-only admin registry checked by Firestore rules."
+    },
+    "/siteSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SiteSeoSettings" },
+      "description": "Global site SEO settings (keywords, title, description) editable by administrators."
     },
     "/categories/{categoryId}": {
       "schema": { "$ref": "#/entities/CategoryRecord" },
