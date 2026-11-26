@@ -33,7 +33,12 @@ import {
   filterAndSortStories,
   mergeCategories,
 } from './utils/storyUtils';
-import { buildCategoryPath, buildStoryPath, parseAppRoute } from './utils/seoFiles';
+import {
+  DEFAULT_PUBLIC_SITE_URL,
+  buildCategoryPath,
+  buildStoryPath,
+  parseAppRoute,
+} from './utils/seoFiles';
 
 const GUEST_BOOKMARKS_KEY = 'walkathawa_guest_bookmarks';
 
@@ -210,7 +215,7 @@ function WalkathawaApp() {
   }, [selectedStoryId, firebaseStories, userStories]);
 
   useEffect(() => {
-    const origin = window.location.origin;
+    const origin = DEFAULT_PUBLIC_SITE_URL;
     if (isAdminRoute) {
       applySeoSettingsToDocument(seoSettings, {
         title: 'Admin — walkathawa',

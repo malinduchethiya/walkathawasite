@@ -1,5 +1,4 @@
-export const DEFAULT_PUBLIC_SITE_URL =
-  'https://ais-pre-h5eoiqoa5gra46iybbx3ie-603157994353.asia-east1.run.app';
+export const DEFAULT_PUBLIC_SITE_URL = 'https://www.walkathawa.site';
 
 export const DEFAULT_SITEMAP_CATEGORIES = [
   'Drama',

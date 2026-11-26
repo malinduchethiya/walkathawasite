@@ -8,7 +8,7 @@ import {
   buildRobotsTxt,
   buildSitemapEntries,
   buildSitemapXml,
-  resolveSiteOrigin,
+  normalizeOrigin,
   type SitemapStoryInput,
 } from './src/utils/seoFiles.ts';
 
@@ -183,15 +183,8 @@ async function fetchPublicSitemapData(forceRefresh: boolean = false): Promise<{
   return { stories, categories };
 }
 
-function getRequestOrigin(req: express.Request): string {
-  return resolveSiteOrigin({
-    forwardedProto: req.headers['x-forwarded-proto'],
-    forwardedHost: req.headers['x-forwarded-host'],
-    host: req.headers.host,
-    protocol: req.protocol,
-    envUrl: process.env.SITE_URL || process.env.APP_URL,
-    fallbackUrl: DEFAULT_PUBLIC_SITE_URL,
-  });
+function getCanonicalOrigin(): string {
+  return normalizeOrigin(process.env.SITE_URL) ?? DEFAULT_PUBLIC_SITE_URL;
 }
 
 async function startServer() {
@@ -201,8 +194,8 @@ async function startServer() {
 
   app.set('trust proxy', true);
 
-  app.get('/robots.txt', (req, res) => {
-    const origin = getRequestOrigin(req);
+  app.get('/robots.txt', (_req, res) => {
+    const origin = getCanonicalOrigin();
     const body = buildRobotsTxt(origin);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -210,7 +203,7 @@ async function startServer() {
   });
 
   app.get('/sitemap.xml', async (req, res) => {
-    const origin = getRequestOrigin(req);
+    const origin = getCanonicalOrigin();
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     const { stories, categories } = await fetchPublicSitemapData(forceRefresh);
     const entries = buildSitemapEntries({

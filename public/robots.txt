@@ -3,4 +3,4 @@ Allow: /
 Disallow: /admin
 Disallow: /admin/
 
-Sitemap: https://ais-pre-h5eoiqoa5gra46iybbx3ie-603157994353.asia-east1.run.app/sitemap.xml
+Sitemap: https://www.walkathawa.site/sitemap.xml

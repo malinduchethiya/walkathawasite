@@ -48,7 +48,11 @@ import {
   validateSeoInput,
   validateStoryInput,
 } from '../utils/storyUtils';
-import { buildSitemapEntries, buildSitemapXml } from '../utils/seoFiles';
+import {
+  DEFAULT_PUBLIC_SITE_URL,
+  buildSitemapEntries,
+  buildSitemapXml,
+} from '../utils/seoFiles';
 
 interface AdminPanelProps {
   customCategories: CategoryRecord[];
@@ -2054,9 +2058,7 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                         rel="noopener noreferrer"
                         className="text-[#60a5fa] hover:underline break-all"
                       >
-                        {typeof window !== 'undefined'
-                          ? `${window.location.origin}/sitemap.xml`
-                          : '/sitemap.xml'}
+                        {`${DEFAULT_PUBLIC_SITE_URL}/sitemap.xml`}
                       </a>
                     </div>
                     <div className="flex items-center justify-between gap-3 bg-[#141621] border border-[#262a3d] rounded-lg px-3.5 py-2.5">
@@ -2067,9 +2069,7 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                         rel="noopener noreferrer"
                         className="text-[#60a5fa] hover:underline break-all"
                       >
-                        {typeof window !== 'undefined'
-                          ? `${window.location.origin}/robots.txt`
-                          : '/robots.txt'}
+                        {`${DEFAULT_PUBLIC_SITE_URL}/robots.txt`}
                       </a>
                     </div>
                   </div>
@@ -2085,7 +2085,7 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                           .filter((s) => s.status === 'published')
                           .map((s) => ({ id: s.id, updatedAt: s.updatedAtMs }));
                         const entries = buildSitemapEntries({
-                          origin: window.location.origin,
+                          origin: DEFAULT_PUBLIC_SITE_URL,
                           stories: published,
                           categories: allCategories,
                         });
