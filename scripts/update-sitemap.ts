@@ -147,6 +147,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+  console.warn('Warning: could not refresh public/sitemap.xml from Firestore, keeping existing file:', err instanceof Error ? err.message : err);
 });
+
