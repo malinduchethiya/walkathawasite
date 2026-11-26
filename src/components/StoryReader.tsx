@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   Bookmark,
@@ -53,6 +53,7 @@ export function StoryReader({
   const [commentError, setCommentError] = useState<string | null>(null);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const incrementedStoryRef = useRef<string | null>(null);
 
   const isAuthor = Boolean(user && story.source === 'firebase' && user.uid === story.authorId);
 
@@ -88,7 +89,12 @@ export function StoryReader({
 
     void load();
 
-    if (user?.emailVerified && story.status === 'published') {
+    if (
+      user?.emailVerified &&
+      story.status === 'published' &&
+      incrementedStoryRef.current !== story.id
+    ) {
+      incrementedStoryRef.current = story.id;
       void incrementStoryViews(story.id, story.views);
     }
 

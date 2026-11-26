@@ -15,7 +15,7 @@ import {
 
 interface ProfileViewProps {
   userStories: Story[];
-  hasFirebaseStories: boolean;
+  existingStoryIds: Set<string>;
   onOpenStory: (story: Story) => void;
   onEditStory: (story: Story, chapters: StoryChapter[]) => void;
   onWriteNew: () => void;
@@ -23,13 +23,21 @@ interface ProfileViewProps {
 
 export function ProfileView({
   userStories,
-  hasFirebaseStories,
+  existingStoryIds,
   onOpenStory,
   onEditStory,
   onWriteNew,
 }: ProfileViewProps) {
-  const { user, profile, privateInfo, authLoading, authError, signInWithGoogle, saveProfile } =
-    useAuth();
+  const {
+    user,
+    profile,
+    privateInfo,
+    authLoading,
+    authError,
+    signInWithGoogle,
+    signOutUser,
+    saveProfile,
+  } = useAuth();
 
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [handle, setHandle] = useState(profile?.handle ?? '');
@@ -106,8 +114,17 @@ export function ProfileView({
     setSeeding(true);
     setSeedMessage(null);
     try {
-      const count = await seedStarterStoriesToFirestore(user, profile);
-      setSeedMessage(`Uploaded ${count} stories and their chapters to Firebase.`);
+      const count = await seedStarterStoriesToFirestore(
+        user,
+        profile,
+        existingStoryIds,
+        (done, total) => setSeedMessage(`Syncing to Firestore (${done}/${total})...`)
+      );
+      setSeedMessage(
+        count > 0
+          ? `Uploaded ${count} stories and their chapters into Firestore /stories.`
+          : 'All starter stories are already synced in Firestore.'
+      );
     } catch (err) {
       setSeedMessage(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
@@ -137,10 +154,22 @@ export function ProfileView({
   return (
     <section className="max-w-3xl mx-auto px-4 sm:px-6 pt-8 pb-16 space-y-8">
       <div className="bg-[#1d202e] rounded-xl p-6 sm:p-8">
-        <h1 className="text-xl font-semibold text-white">Author Profile</h1>
-        <p className="mt-1 text-xs text-[#9ea4b8]">
-          Private email ({privateInfo?.email ?? user.email}) is isolated from public story cards.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold text-white">Author Profile</h1>
+            <p className="mt-1 text-xs text-[#9ea4b8]">
+              Private email ({privateInfo?.email ?? user.email}) is isolated from public story cards.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={authLoading}
+            onClick={() => void signOutUser()}
+            className="px-3.5 py-2 text-xs font-medium text-[#e6e9f2] bg-[#141621] hover:bg-[#262a3d] border border-[#2d3248] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            Sign Out
+          </button>
+        </div>
 
         <form onSubmit={(e) => void handleSaveProfile(e)} noValidate className="mt-6 space-y-4">
           {formErrors.length > 0 && (
@@ -229,14 +258,14 @@ export function ProfileView({
             Your Stories ({userStories.length})
           </h2>
           <div className="flex items-center gap-2">
-            {!hasFirebaseStories && (
+            {existingStoryIds.size < 40 && (
               <button
                 type="button"
                 disabled={seeding}
                 onClick={() => void handleSeedStarterStories()}
                 className="px-3.5 py-2 text-xs font-medium bg-[#141621] hover:bg-[#25293b] border border-[#2d3248] text-[#d5d9e6] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
               >
-                {seeding ? 'Uploading...' : 'Sync Starter Stories to Firebase'}
+                {seeding ? 'Syncing...' : 'Sync 40 Stories to Firestore'}
               </button>
             )}
             <button

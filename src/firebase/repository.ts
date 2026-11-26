@@ -541,21 +541,66 @@ export async function toggleUserBookmark(
 
 export async function seedStarterStoriesToFirestore(
   user: User,
-  profile: UserProfile
+  profile: UserProfile,
+  existingIds: Set<string> = new Set(),
+  onProgress?: (uploaded: number, total: number) => void
 ): Promise<number> {
-  let uploaded = 0;
-  for (const bundle of STARTER_STORY_BUNDLES) {
-    await saveStoryWithChapters(user, profile, {
-      title: bundle.story.title,
-      excerpt: bundle.story.excerpt,
-      category: bundle.story.category,
-      status: 'published',
-      chapters: bundle.chapters.map((ch) => ({
-        title: ch.title,
-        content: ch.content,
-      })),
-    });
-    uploaded += 1;
+  const pending = STARTER_STORY_BUNDLES.filter((bundle) => !existingIds.has(bundle.story.id));
+  if (pending.length === 0) {
+    return 0;
   }
+
+  // Keep each batch <= 3 stories so security rules stay well below Firestore's 20 get()/exists() per-batch limit
+  const CHUNK_SIZE = 3;
+  let uploaded = 0;
+
+  for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
+    const chunk = pending.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+
+    for (const bundle of chunk) {
+      const storyId = bundle.story.id;
+      const storyRef = doc(db, 'stories', storyId);
+
+      batch.set(storyRef, {
+        title: bundle.story.title.trim().slice(0, BLUEPRINT_LIMITS.STORY_TITLE_MAX),
+        excerpt: bundle.story.excerpt.trim().slice(0, BLUEPRINT_LIMITS.STORY_EXCERPT_MAX),
+        category: bundle.story.category,
+        authorId: user.uid,
+        authorName: profile.displayName.trim().slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX),
+        authorPhotoURL: profile.photoURL.trim().slice(0, BLUEPRINT_LIMITS.PHOTO_URL_MAX),
+        authorVerified: false,
+        views: 0,
+        chapterCount: bundle.chapters.length,
+        status: 'published',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      bundle.chapters.forEach((chapter, chIdx) => {
+        const chapterId = chapter.id || `ch_${chIdx + 1}`;
+        const chapterRef = doc(db, 'stories', storyId, 'chapters', chapterId);
+        batch.set(chapterRef, {
+          storyId,
+          authorId: user.uid,
+          status: 'published',
+          chapterNumber: chIdx + 1,
+          title: chapter.title.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_TITLE_MAX),
+          content: chapter.content.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_CONTENT_MAX),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+    }
+
+    try {
+      await batch.commit();
+      uploaded += chunk.length;
+      onProgress?.(uploaded, pending.length);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'stories');
+    }
+  }
+
   return uploaded;
 }

@@ -7,7 +7,6 @@ import { SidebarDrawer } from './components/SidebarDrawer';
 import { StoryEditor } from './components/StoryEditor';
 import { StoryGrid } from './components/StoryGrid';
 import { StoryReader } from './components/StoryReader';
-import { STARTER_STORIES } from './data/starterStories';
 import {
   deleteStoryWithChapters,
   subscribePublishedStories,
@@ -39,6 +38,7 @@ function KathaGridApp() {
   const [firebaseStories, setFirebaseStories] = useState<Story[]>([]);
   const [userStories, setUserStories] = useState<Story[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const [selectedCategory, setSelectedCategory] = useState<StoryCategory | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,14 +51,17 @@ function KathaGridApp() {
   const [firebaseBookmarks, setFirebaseBookmarks] = useState<UserBookmark[]>([]);
   const [guestBookmarkIds, setGuestBookmarkIds] = useState<string[]>(() => readGuestBookmarkIds());
 
+  // Live subscription to Firestore root /stories collection
   useEffect(() => {
     const unsubscribe = subscribePublishedStories(
       (items) => {
         setFirebaseStories(items);
         setStoriesLoading(false);
+        setSyncError(null);
       },
-      () => {
+      (err) => {
         setStoriesLoading(false);
+        setSyncError(err.message);
       }
     );
     return () => unsubscribe();
@@ -74,13 +77,13 @@ function KathaGridApp() {
     const unsubStories = subscribeUserStories(
       user.uid,
       (items) => setUserStories(items),
-      () => setUserStories([])
+      (err) => setSyncError(err.message)
     );
 
     const unsubBookmarks = subscribeUserBookmarks(
       user.uid,
       (items) => setFirebaseBookmarks(items),
-      () => setFirebaseBookmarks([])
+      (err) => setSyncError(err.message)
     );
 
     return () => {
@@ -89,26 +92,19 @@ function KathaGridApp() {
     };
   }, [authReady, user]);
 
-  // Combine live Firebase stories (prioritized first) with starter stories when Firestore has fewer than 12 items
-  const allCatalogStories = useMemo(() => {
-    if (firebaseStories.length >= 12) {
-      return firebaseStories;
-    }
-    const firebaseTitles = new Set(firebaseStories.map((s) => s.title.toLowerCase()));
-    const remainingStarters = STARTER_STORIES.filter(
-      (s) => !firebaseTitles.has(s.title.toLowerCase())
-    );
-    return [...firebaseStories, ...remainingStarters];
-  }, [firebaseStories]);
+  const existingStoryIds = useMemo(
+    () => new Set(firebaseStories.map((s) => s.id)),
+    [firebaseStories]
+  );
 
   const visibleStories = useMemo(
     () =>
-      filterAndSortStories(allCatalogStories, {
+      filterAndSortStories(firebaseStories, {
         category: selectedCategory,
         query: searchQuery,
         sortBy,
       }),
-    [allCatalogStories, selectedCategory, searchQuery, sortBy]
+    [firebaseStories, selectedCategory, searchQuery, sortBy]
   );
 
   const bookmarkedIds = useMemo(() => {
@@ -119,18 +115,18 @@ function KathaGridApp() {
   }, [user, firebaseBookmarks, guestBookmarkIds]);
 
   const savedStories = useMemo(
-    () => allCatalogStories.filter((story) => bookmarkedIds.has(story.id)),
-    [allCatalogStories, bookmarkedIds]
+    () => firebaseStories.filter((story) => bookmarkedIds.has(story.id)),
+    [firebaseStories, bookmarkedIds]
   );
 
   const selectedStory = useMemo(() => {
     if (!selectedStoryId) return null;
     return (
-      allCatalogStories.find((s) => s.id === selectedStoryId) ??
+      firebaseStories.find((s) => s.id === selectedStoryId) ??
       userStories.find((s) => s.id === selectedStoryId) ??
       null
     );
-  }, [selectedStoryId, allCatalogStories, userStories]);
+  }, [selectedStoryId, firebaseStories, userStories]);
 
   const handleNavigate = useCallback((view: AppView) => {
     if (view !== 'write') {
@@ -216,13 +212,37 @@ function KathaGridApp() {
         onSortChange={setSortBy}
       />
 
+      {syncError && (
+        <div
+          role="alert"
+          className="max-w-[1380px] mx-auto px-4 sm:px-6 pt-5"
+        >
+          <div className="bg-[#2a1922] border border-[#5a293a] rounded-xl px-4 py-3 text-xs text-[#f7a8b6] flex items-center justify-between gap-3">
+            <span className="break-all">Firestore sync error: {syncError}</span>
+            <button
+              type="button"
+              onClick={() => setSyncError(null)}
+              className="text-white hover:underline shrink-0 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       <main>
         {activeView === 'stories' && (
           <StoryGrid
             stories={visibleStories}
-            loading={storiesLoading && firebaseStories.length === 0 && allCatalogStories.length === 0}
+            loading={storiesLoading}
             selectedCategory={selectedCategory}
             searchQuery={searchQuery}
+            emptyTitle={firebaseStories.length === 0 ? 'No stories yet' : 'No matching stories'}
+            emptyDescription={
+              firebaseStories.length === 0
+                ? 'Published stories will appear here as soon as they are available.'
+                : 'Try adjusting your search query or selecting another category.'
+            }
             onClearFilters={() => {
               setSelectedCategory('All');
               setSearchQuery('');
@@ -281,7 +301,7 @@ function KathaGridApp() {
         {activeView === 'profile' && (
           <ProfileView
             userStories={userStories}
-            hasFirebaseStories={firebaseStories.length > 0}
+            existingStoryIds={existingStoryIds}
             onOpenStory={handleOpenStory}
             onEditStory={handleEditStory}
             onWriteNew={() => handleNavigate('write')}

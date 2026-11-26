@@ -2,17 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BLUEPRINT_LIMITS,
+  STORIES_PER_PAGE,
   estimateReadingMinutes,
   filterAndSortStories,
   formatChapterTabLabel,
   formatCompactViews,
   formatRelativeTime,
   generateSafeDocId,
+  paginateStories,
   sanitizeHandle,
   validateProfileInput,
   validateStoryInput,
 } from './storyUtils';
 import type { Story } from '../types/story';
+import { STARTER_STORY_BUNDLES } from '../data/starterStories';
 
 test('formatCompactViews formats counts cleanly like the reference grid', () => {
   assert.equal(formatCompactViews(0), '0');
@@ -173,4 +176,44 @@ test('formatChapterTabLabel avoids duplicating Part/Chapter/Verse prefixes', () 
   assert.equal(formatChapterTabLabel(2, 'Verse II: Rain'), 'Verse II: Rain');
   assert.equal(formatChapterTabLabel(3, 'Harbour Dawn'), 'Part 3: Harbour Dawn');
   assert.equal(formatChapterTabLabel(4, '   '), 'Part 4');
+});
+
+test('paginateStories shows 40 stories per gallery page (10 rows x 4 columns)', () => {
+  assert.equal(STORIES_PER_PAGE, 40);
+  const items = Array.from({ length: 45 }, (_, i) => i + 1);
+  const page1 = paginateStories(items, 1, STORIES_PER_PAGE);
+  assert.equal(page1.items.length, 40);
+  assert.equal(page1.currentPage, 1);
+  assert.equal(page1.totalPages, 2);
+
+  const page2 = paginateStories(items, 2, STORIES_PER_PAGE);
+  assert.equal(page2.items.length, 5);
+  assert.equal(page2.items[0], 41);
+
+  const clamped = paginateStories(items, 99, STORIES_PER_PAGE);
+  assert.equal(clamped.currentPage, 2);
+});
+
+test('all 40 starter story bundles strictly satisfy Firestore blueprint and ID rules', () => {
+  assert.equal(STARTER_STORY_BUNDLES.length, 40);
+  const ids = new Set<string>();
+
+  for (const bundle of STARTER_STORY_BUNDLES) {
+    assert.match(bundle.story.id, BLUEPRINT_LIMITS.ID_PATTERN);
+    assert.ok(!ids.has(bundle.story.id), `Duplicate starter story id: ${bundle.story.id}`);
+    ids.add(bundle.story.id);
+
+    const errors = validateStoryInput({
+      title: bundle.story.title,
+      excerpt: bundle.story.excerpt,
+      category: bundle.story.category,
+      status: bundle.story.status,
+      chapters: bundle.chapters.map((c) => ({ title: c.title, content: c.content })),
+    });
+    assert.deepEqual(errors, [], `Validation failed for ${bundle.story.id}: ${errors.join('; ')}`);
+
+    for (const ch of bundle.chapters) {
+      assert.match(ch.id, BLUEPRINT_LIMITS.ID_PATTERN);
+    }
+  }
 });

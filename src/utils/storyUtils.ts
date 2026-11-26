@@ -234,3 +234,21 @@ export function formatChapterTabLabel(chapterNumber: number, title: string): str
   }
   return `Part ${chapterNumber}: ${trimmed}`;
 }
+
+export const STORIES_PER_PAGE = 40; // 10 rows x 4 columns on desktop
+
+export function paginateStories<T>(
+  items: T[],
+  page: number,
+  pageSize: number = STORIES_PER_PAGE
+): { items: T[]; currentPage: number; totalPages: number } {
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+  const totalPages = Math.max(1, Math.ceil(items.length / safePageSize));
+  const currentPage = Math.min(Math.max(1, Math.floor(page)), totalPages);
+  const start = (currentPage - 1) * safePageSize;
+  return {
+    items: items.slice(start, start + safePageSize),
+    currentPage,
+    totalPages,
+  };
+}
