@@ -62,3 +62,15 @@ test('Dirty Dozen #8–#12: Path ID poisoning, oversized payloads, orphaned chap
   assert.match(rules, /allow list:\s*if\s*existing\(\)\.status\s*==\s*'published'/);
   assert.doesNotMatch(rules, /allow list:\s*if\s*isSignedIn\(\);/);
 });
+
+test('Admin RBAC, custom categories, and image URL scheme validation are enforced', () => {
+  const rules = loadRules();
+  assert.match(rules, /function isBootstrappedAdmin\(\)/);
+  assert.match(rules, /isVerifiedUser\(\)\s*&&\s*request\.auth\.token\.email\s*==\s*'merlinfiverr0@gmail\.com'/);
+  assert.match(rules, /match\s*\/admins\/\{adminId\}/);
+  assert.match(rules, /allow create, update, delete:\s*if\s*false;/);
+  assert.match(rules, /match\s*\/categories\/\{categoryId\}/);
+  assert.match(rules, /function isValidImageUrl\(url\)/);
+  assert.match(rules, /url\.matches\('\^https:\/\/\.\*'\)/);
+});
+

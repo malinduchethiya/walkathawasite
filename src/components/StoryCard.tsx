@@ -10,13 +10,28 @@ interface StoryCardProps {
 
 export function StoryCard({ story, onOpenStory }: StoryCardProps) {
   const [imgError, setImgError] = useState(false);
+  const [coverError, setCoverError] = useState(false);
 
   return (
     <article className="relative bg-[#1d202e] hover:bg-[#222637] transition-colors duration-150 rounded-xl pt-8 pb-5 px-5 flex flex-col min-h-[218px]">
       {/* Top-center overlapping category badge matching the reference layout */}
-      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#8d64cc] text-white text-[12px] font-medium px-4 py-1 rounded-full whitespace-nowrap leading-snug select-none">
+      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#8d64cc] text-white text-[12px] font-medium px-4 py-1 rounded-full whitespace-nowrap leading-snug select-none max-w-[85%] truncate">
         {story.category}
       </span>
+
+      {/* Optional cover image when added by admin/author */}
+      {story.coverImageURL && !coverError && (
+        <div className="mb-3.5 rounded-lg overflow-hidden bg-[#141621] aspect-[16/9]">
+          <img
+            src={story.coverImageURL}
+            alt={story.title}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setCoverError(true)}
+            className="w-full h-full object-cover"
+          />
+        </div>
+      )}
 
       {/* Centered timestamp and views row */}
       <div className="flex items-center justify-center gap-4 text-[12px] text-[#c2c6d4]">

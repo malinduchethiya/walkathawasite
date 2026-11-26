@@ -1,10 +1,13 @@
 import {
   STORY_CATEGORIES,
+  type CategoryRecord,
   type SortOption,
   type Story,
   type StoryCategory,
   type StoryDraftInput,
 } from '../types/story';
+
+export const ADMIN_EMAIL = 'merlinfiverr0@gmail.com';
 
 // Verbatim constraints synchronized with firebase-blueprint.json & firestore.rules
 export const BLUEPRINT_LIMITS = {
@@ -17,6 +20,11 @@ export const BLUEPRINT_LIMITS = {
   HANDLE_PATTERN: /^[a-zA-Z0-9_-]+$/,
   BIO_MAX: 280,
   PHOTO_URL_MAX: 500,
+  IMAGE_URL_MAX: 1000,
+  CATEGORY_MIN: 1,
+  CATEGORY_MAX: 40,
+  CATEGORY_SLUG_MAX: 60,
+  CATEGORY_SLUG_PATTERN: /^[a-z0-9_-]+$/,
   STORY_TITLE_MIN: 2,
   STORY_TITLE_MAX: 140,
   STORY_EXCERPT_MIN: 10,
@@ -29,6 +37,81 @@ export const BLUEPRINT_LIMITS = {
   COMMENT_MIN: 1,
   COMMENT_MAX: 1000,
 } as const;
+
+export function isAdminAccount(
+  email?: string | null,
+  emailVerified?: boolean | null
+): boolean {
+  if (!email || !emailVerified) return false;
+  return email.trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+export function isSafeImageUrl(raw: string | undefined | null): boolean {
+  const value = (raw ?? '').trim();
+  if (!value) return true;
+  if (value.length > BLUEPRINT_LIMITS.IMAGE_URL_MAX) return false;
+  if (value.startsWith('/') && !value.startsWith('//')) {
+    return true;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeCategoryName(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').slice(0, BLUEPRINT_LIMITS.CATEGORY_MAX);
+}
+
+export function slugifyCategory(name: string): string {
+  const normalized = normalizeCategoryName(name);
+  const ascii = normalized
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, BLUEPRINT_LIMITS.CATEGORY_SLUG_MAX);
+
+  if (ascii.length > 0 && BLUEPRINT_LIMITS.CATEGORY_SLUG_PATTERN.test(ascii)) {
+    return ascii;
+  }
+
+  // Deterministic safe ASCII slug for non-Latin category names (e.g., Sinhala)
+  let hash = 2166136261;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `cat-${(hash >>> 0).toString(36)}`;
+}
+
+export function mergeCategories(
+  customCategories: CategoryRecord[],
+  stories: Story[]
+): string[] {
+  const seen = new Map<string, string>();
+  const add = (name: string) => {
+    const clean = normalizeCategoryName(name);
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, clean);
+    }
+  };
+
+  for (const base of STORY_CATEGORIES) {
+    add(base);
+  }
+  for (const cat of customCategories) {
+    add(cat.name);
+  }
+  for (const story of stories) {
+    add(story.category);
+  }
+
+  return Array.from(seen.values());
+}
 
 export function formatCompactViews(views: number): string {
   const safe = Math.max(0, Math.floor(Number.isFinite(views) ? views : 0));
@@ -105,6 +188,7 @@ export function validateStoryInput(input: StoryDraftInput): string[] {
   const errors: string[] = [];
   const title = input.title.trim();
   const excerpt = input.excerpt.trim();
+  const category = normalizeCategoryName(input.category);
 
   if (title.length < BLUEPRINT_LIMITS.STORY_TITLE_MIN || title.length > BLUEPRINT_LIMITS.STORY_TITLE_MAX) {
     errors.push(
@@ -121,8 +205,14 @@ export function validateStoryInput(input: StoryDraftInput): string[] {
     );
   }
 
-  if (!STORY_CATEGORIES.includes(input.category)) {
-    errors.push('Select a valid story category.');
+  if (category.length < BLUEPRINT_LIMITS.CATEGORY_MIN || category.length > BLUEPRINT_LIMITS.CATEGORY_MAX) {
+    errors.push(
+      `Category must be between ${BLUEPRINT_LIMITS.CATEGORY_MIN} and ${BLUEPRINT_LIMITS.CATEGORY_MAX} characters.`
+    );
+  }
+
+  if (!isSafeImageUrl(input.coverImageURL)) {
+    errors.push('Cover image must be a valid https:// URL or site-relative / path.');
   }
 
   if (input.status !== 'draft' && input.status !== 'published') {
@@ -152,6 +242,9 @@ export function validateStoryInput(input: StoryDraftInput): string[] {
         errors.push(
           `Chapter ${index + 1} content must be between ${BLUEPRINT_LIMITS.CHAPTER_CONTENT_MIN} and ${BLUEPRINT_LIMITS.CHAPTER_CONTENT_MAX} characters.`
         );
+      }
+      if (!isSafeImageUrl(chapter.imageURL)) {
+        errors.push(`Chapter ${index + 1} image must be a valid https:// URL or site-relative / path.`);
       }
     });
   }

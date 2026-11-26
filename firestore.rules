@@ -28,21 +28,29 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    // Zero-lookup admin check safe for O(1) allow list queries (strictly enforces email_verified == true)
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'merlinfiverr0@gmail.com';
+    }
+
+    // Full admin check for single-document get/create/update/delete operations
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
     function isValidCategory(category) {
-      return category is string && category in [
-        'Drama',
-        'Mystery',
-        'Sci-Fi',
-        'Folklore',
-        'Slice of Life',
-        'Poetry',
-        'Adventure',
-        'Romance'
-      ];
+      return category is string && category.size() >= 1 && category.size() <= 40;
+    }
+
+    function isValidImageUrl(url) {
+      return url is string
+        && url.size() <= 1000
+        && (url == '' || url.matches('^https://.*') || url.matches('^/.*'));
     }
 
     function isValidStatus(status) {
@@ -108,6 +116,17 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidCategoryRecord(data) {
+      return data.keys().hasAll(['name', 'slug', 'createdBy', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'slug', 'createdBy', 'status', 'createdAt', 'updatedAt'])
+        && isValidCategory(data.name)
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 60 && data.slug.matches('^[a-z0-9_\\-]+$')
+        && data.createdBy is string && isValidId(data.createdBy)
+        && data.status is string && data.status == 'active'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidStory(data) {
       return data.keys().hasAll([
           'title',
@@ -127,6 +146,7 @@ service cloud.firestore {
           'title',
           'excerpt',
           'category',
+          'coverImageURL',
           'authorId',
           'authorName',
           'authorPhotoURL',
@@ -140,6 +160,7 @@ service cloud.firestore {
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
         && data.excerpt is string && data.excerpt.size() >= 10 && data.excerpt.size() <= 320
         && isValidCategory(data.category)
+        && (!('coverImageURL' in data) || isValidImageUrl(data.coverImageURL))
         && data.authorId is string && isValidId(data.authorId)
         && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
         && data.authorPhotoURL is string && data.authorPhotoURL.size() <= 500
@@ -169,6 +190,7 @@ service cloud.firestore {
           'chapterNumber',
           'title',
           'content',
+          'imageURL',
           'createdAt',
           'updatedAt'
         ])
@@ -178,6 +200,7 @@ service cloud.firestore {
         && data.chapterNumber is int && data.chapterNumber >= 1 && data.chapterNumber <= 200
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
         && data.content is string && data.content.size() >= 20 && data.content.size() <= 25000
+        && (!('imageURL' in data) || isValidImageUrl(data.imageURL))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -191,6 +214,13 @@ service cloud.firestore {
         && data.body is string && data.body.size() >= 1 && data.body.size() <= 1000
         && data.status is string && data.status == 'visible'
         && data.createdAt is timestamp;
+    }
+
+    // --- Collection 0: Admin Registry (Server-only writes, owner read) ---
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && isOwner(adminId);
+      allow list: if false;
+      allow create, update, delete: if false;
     }
 
     // --- Collection 1: Public Author Profiles (Zero PII) ---
@@ -264,37 +294,69 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // --- Collection 3: Stories ---
+    // --- Collection 3: Custom Story Categories (Public Read, Admin Write) ---
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if existing().status == 'active';
+      allow create: if isAdmin()
+        && isValidId(categoryId)
+        && isValidCategoryRecord(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(categoryId)
+        && isValidCategoryRecord(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().status == existing().status
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'slug', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    // --- Collection 4: Stories ---
     match /stories/{storyId} {
       allow get: if isValidId(storyId)
-        && (existing().status == 'published' || (isSignedIn() && existing().authorId == request.auth.uid));
+        && (
+          existing().status == 'published'
+          || (isSignedIn() && existing().authorId == request.auth.uid)
+          || isAdmin()
+        );
       allow list: if existing().status == 'published'
-        || (isSignedIn() && existing().authorId == request.auth.uid);
+        || (isSignedIn() && existing().authorId == request.auth.uid)
+        || isBootstrappedAdmin();
       allow create: if isVerifiedUser()
         && isValidId(storyId)
         && isValidStory(incoming())
         && incoming().authorId == request.auth.uid
-        && incoming().views == 0
-        && incoming().authorVerified == false
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+        && (
+          (
+            incoming().views == 0
+            && incoming().authorVerified == false
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          )
+          || isAdmin()
+        );
       allow update: if isVerifiedUser()
         && isValidId(storyId)
         && isValidStory(incoming())
         && incoming().authorId == existing().authorId
         && incoming().createdAt == existing().createdAt
-        && incoming().authorVerified == existing().authorVerified
         && (
-          // Action 1: Author edits story metadata or publication status
+          // Action 1: Author edits own story metadata or publication status
           (
             existing().authorId == request.auth.uid
+            && incoming().authorVerified == existing().authorVerified
             && incoming().views == existing().views
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'title',
               'excerpt',
               'category',
+              'coverImageURL',
               'authorName',
               'authorPhotoURL',
               'chapterCount',
@@ -306,14 +368,34 @@ service cloud.firestore {
           // Action 2: Verified reader increments view count by exactly 1
           (
             existing().status == 'published'
+            && incoming().authorVerified == existing().authorVerified
             && incoming().views == existing().views + 1
             && incoming().updatedAt == existing().updatedAt
             && incoming().diff(existing()).affectedKeys().hasOnly(['views'])
           )
+          ||
+          // Action 3: Verified administrator manages any story
+          (
+            isAdmin()
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'excerpt',
+              'category',
+              'coverImageURL',
+              'authorName',
+              'authorPhotoURL',
+              'authorVerified',
+              'views',
+              'chapterCount',
+              'status',
+              'updatedAt'
+            ])
+          )
         );
       allow delete: if isVerifiedUser()
         && isValidId(storyId)
-        && existing().authorId == request.auth.uid;
+        && (existing().authorId == request.auth.uid || isAdmin());
 
       // Subcollection: Story Chapters / Parts
       match /chapters/{chapterId} {
@@ -323,19 +405,33 @@ service cloud.firestore {
           && (
             parentStory(storyId).status == 'published'
             || (isSignedIn() && parentStory(storyId).authorId == request.auth.uid)
+            || isAdmin()
           );
         allow list: if existing().status == 'published'
-          || (isSignedIn() && existing().authorId == request.auth.uid);
+          || (isSignedIn() && existing().authorId == request.auth.uid)
+          || isBootstrappedAdmin();
         allow create: if isVerifiedUser()
           && isValidId(storyId)
           && isValidId(chapterId)
           && isValidChapter(incoming(), storyId)
-          && incoming().authorId == request.auth.uid
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time
           && existsAfter(/databases/$(database)/documents/stories/$(storyId))
-          && parentStoryAfter(storyId).authorId == request.auth.uid
-          && incoming().status == parentStoryAfter(storyId).status;
+          && incoming().status == parentStoryAfter(storyId).status
+          && (
+            (
+              incoming().authorId == request.auth.uid
+              && parentStoryAfter(storyId).authorId == request.auth.uid
+            )
+            ||
+            (
+              isAdmin()
+              && (
+                incoming().authorId == parentStoryAfter(storyId).authorId
+                || incoming().authorId == request.auth.uid
+              )
+            )
+          );
         allow update: if isVerifiedUser()
           && isValidId(storyId)
           && isValidId(chapterId)
@@ -345,11 +441,12 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && exists(/databases/$(database)/documents/stories/$(storyId))
-          && parentStory(storyId).authorId == request.auth.uid
+          && (parentStory(storyId).authorId == request.auth.uid || isAdmin())
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'chapterNumber',
             'title',
             'content',
+            'imageURL',
             'status',
             'updatedAt'
           ]);
@@ -357,7 +454,7 @@ service cloud.firestore {
           && isValidId(storyId)
           && isValidId(chapterId)
           && exists(/databases/$(database)/documents/stories/$(storyId))
-          && parentStory(storyId).authorId == request.auth.uid;
+          && (parentStory(storyId).authorId == request.auth.uid || isAdmin());
       }
 
       // Subcollection: Story Comments
@@ -365,8 +462,8 @@ service cloud.firestore {
         allow get: if isValidId(storyId)
           && isValidId(commentId)
           && exists(/databases/$(database)/documents/stories/$(storyId))
-          && parentStory(storyId).status == 'published';
-        allow list: if existing().status == 'visible';
+          && (parentStory(storyId).status == 'published' || isAdmin());
+        allow list: if existing().status == 'visible' || isBootstrappedAdmin();
         allow create: if isVerifiedUser()
           && isValidId(storyId)
           && isValidId(commentId)
@@ -382,6 +479,7 @@ service cloud.firestore {
           && (
             existing().authorId == request.auth.uid
             || parentStory(storyId).authorId == request.auth.uid
+            || isAdmin()
           );
       }
     }

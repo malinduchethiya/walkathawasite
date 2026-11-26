@@ -1,16 +1,13 @@
 import { useEffect } from 'react';
 import { Search, X } from 'lucide-react';
-import {
-  STORY_CATEGORIES,
-  type SortOption,
-  type StoryCategory,
-} from '../types/story';
+import type { SortOption, StoryCategory } from '../types/story';
 import type { AppView } from './Header';
 
 interface SidebarDrawerProps {
   open: boolean;
   activeView: AppView;
   savedCount: number;
+  categories: string[];
   selectedCategory: StoryCategory | 'All';
   searchQuery: string;
   sortBy: SortOption;
@@ -25,6 +22,7 @@ export function SidebarDrawer({
   open,
   activeView,
   savedCount,
+  categories,
   selectedCategory,
   searchQuery,
   sortBy,
@@ -208,7 +206,7 @@ export function SidebarDrawer({
               >
                 All
               </button>
-              {STORY_CATEGORIES.map((category) => (
+              {categories.map((category) => (
                 <button
                   key={category}
                   type="button"

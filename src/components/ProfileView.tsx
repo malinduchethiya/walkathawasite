@@ -61,7 +61,7 @@ export function ProfileView({
     return (
       <section className="max-w-md mx-auto px-4 sm:px-6 pt-16 pb-20">
         <div className="bg-[#1d202e] rounded-xl p-8 text-center">
-          <h1 className="text-xl font-semibold text-white">Sign in to KathaGrid</h1>
+          <h1 className="text-xl font-semibold text-white">Sign in to walkathawa</h1>
           <p className="mt-2.5 text-sm text-[#a7acbe] leading-relaxed">
             Connect your Google account to manage your author profile, publish stories with
             chapters, and sync saved bookmarks with Firebase.

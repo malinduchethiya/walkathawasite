@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AdminPanel } from './components/AdminPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Header, type AppView } from './components/Header';
 import { ProfileView } from './components/ProfileView';
@@ -8,16 +9,29 @@ import { StoryEditor } from './components/StoryEditor';
 import { StoryGrid } from './components/StoryGrid';
 import { StoryReader } from './components/StoryReader';
 import {
+  adminDeleteStoryWithChapters,
   deleteStoryWithChapters,
+  subscribeCategories,
   subscribePublishedStories,
   subscribeUserBookmarks,
   subscribeUserStories,
   toggleUserBookmark,
 } from './firebase/repository';
-import type { SortOption, Story, StoryCategory, StoryChapter, UserBookmark } from './types/story';
-import { filterAndSortStories } from './utils/storyUtils';
+import type {
+  CategoryRecord,
+  SortOption,
+  Story,
+  StoryCategory,
+  StoryChapter,
+  UserBookmark,
+} from './types/story';
+import { filterAndSortStories, mergeCategories } from './utils/storyUtils';
 
-const GUEST_BOOKMARKS_KEY = 'kathagrid_guest_bookmarks';
+const GUEST_BOOKMARKS_KEY = 'walkathawa_guest_bookmarks';
+
+function isAdminPath(pathname: string): boolean {
+  return /^\/admin(\/|$)/i.test(pathname);
+}
 
 function readGuestBookmarkIds(): string[] {
   try {
@@ -30,12 +44,16 @@ function readGuestBookmarkIds(): string[] {
   }
 }
 
-function KathaGridApp() {
-  const { user, authReady } = useAuth();
+function WalkathawaApp() {
+  const { user, isAdmin, authReady } = useAuth();
 
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() =>
+    isAdminPath(window.location.pathname)
+  );
   const [activeView, setActiveView] = useState<AppView>('stories');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [firebaseStories, setFirebaseStories] = useState<Story[]>([]);
+  const [customCategories, setCustomCategories] = useState<CategoryRecord[]>([]);
   const [userStories, setUserStories] = useState<Story[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -51,6 +69,21 @@ function KathaGridApp() {
   const [firebaseBookmarks, setFirebaseBookmarks] = useState<UserBookmark[]>([]);
   const [guestBookmarkIds, setGuestBookmarkIds] = useState<string[]>(() => readGuestBookmarkIds());
 
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsAdminRoute(isAdminPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const exitAdminRoute = useCallback(() => {
+    window.history.pushState({}, '', '/');
+    setIsAdminRoute(false);
+    setActiveView('stories');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
   // Live subscription to Firestore root /stories collection
   useEffect(() => {
     const unsubscribe = subscribePublishedStories(
@@ -62,6 +95,17 @@ function KathaGridApp() {
       (err) => {
         setStoriesLoading(false);
         setSyncError(err.message);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Live subscription to Firestore /categories collection
+  useEffect(() => {
+    const unsubscribe = subscribeCategories(
+      (items) => setCustomCategories(items),
+      () => {
+        // Non-blocking fallback to default categories if /categories is unavailable
       }
     );
     return () => unsubscribe();
@@ -91,6 +135,11 @@ function KathaGridApp() {
       unsubBookmarks();
     };
   }, [authReady, user]);
+
+  const allCategories = useMemo(
+    () => mergeCategories(customCategories, firebaseStories),
+    [customCategories, firebaseStories]
+  );
 
   const existingStoryIds = useMemo(
     () => new Set(firebaseStories.map((s) => s.id)),
@@ -175,11 +224,15 @@ function KathaGridApp() {
   const handleDeleteStory = useCallback(
     async (story: Story) => {
       if (!user) return;
-      await deleteStoryWithChapters(story.id, user.uid);
+      if (isAdmin && story.authorId !== user.uid) {
+        await adminDeleteStoryWithChapters(story.id);
+      } else {
+        await deleteStoryWithChapters(story.id, user.uid);
+      }
       setSelectedStoryId(null);
       setActiveView('stories');
     },
-    [user]
+    [user, isAdmin]
   );
 
   const handleStorySaved = useCallback((storyId: string) => {
@@ -189,6 +242,15 @@ function KathaGridApp() {
     setActiveView('read');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
+
+  if (isAdminRoute) {
+    return (
+      <AdminPanel
+        customCategories={customCategories}
+        onExitAdmin={exitAdminRoute}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#141621] text-[#eef0f6]">
@@ -202,6 +264,7 @@ function KathaGridApp() {
         open={sidebarOpen}
         activeView={activeView}
         savedCount={bookmarkedIds.size}
+        categories={allCategories}
         selectedCategory={selectedCategory}
         searchQuery={searchQuery}
         sortBy={sortBy}
@@ -213,10 +276,7 @@ function KathaGridApp() {
       />
 
       {syncError && (
-        <div
-          role="alert"
-          className="max-w-[1380px] mx-auto px-4 sm:px-6 pt-5"
-        >
+        <div role="alert" className="max-w-[1380px] mx-auto px-4 sm:px-6 pt-5">
           <div className="bg-[#2a1922] border border-[#5a293a] rounded-xl px-4 py-3 text-xs text-[#f7a8b6] flex items-center justify-between gap-3">
             <span className="break-all">Firestore sync error: {syncError}</span>
             <button
@@ -278,6 +338,7 @@ function KathaGridApp() {
         {activeView === 'write' && (
           <StoryEditor
             key={editingStory?.id ?? 'new'}
+            categories={allCategories}
             editingStory={editingStory}
             editingChapters={editingChapters}
             onSaved={handleStorySaved}
@@ -316,7 +377,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <KathaGridApp />
+        <WalkathawaApp />
       </AuthProvider>
     </ErrorBoundary>
   );

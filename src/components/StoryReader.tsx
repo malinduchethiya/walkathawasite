@@ -44,7 +44,7 @@ export function StoryReader({
   onEditStory,
   onDeleteStory,
 }: StoryReaderProps) {
-  const { user, profile, signInWithGoogle } = useAuth();
+  const { user, profile, isAdmin, signInWithGoogle } = useAuth();
   const [chapters, setChapters] = useState<StoryChapter[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [loadingChapters, setLoadingChapters] = useState(true);
@@ -55,7 +55,9 @@ export function StoryReader({
   const [deleting, setDeleting] = useState(false);
   const incrementedStoryRef = useRef<string | null>(null);
 
-  const isAuthor = Boolean(user && story.source === 'firebase' && user.uid === story.authorId);
+  const isAuthor = Boolean(
+    user && story.source === 'firebase' && (user.uid === story.authorId || isAdmin)
+  );
 
   useEffect(() => {
     let active = true;
@@ -244,6 +246,16 @@ export function StoryReader({
         </h1>
         <p className="mt-3 text-sm text-[#b2b6c7] leading-relaxed">{story.excerpt}</p>
         <p className="mt-4 text-xs text-[#9ea4b8]">By {story.authorName}</p>
+        {story.coverImageURL && (
+          <div className="mt-5 rounded-lg overflow-hidden bg-[#141621]">
+            <img
+              src={story.coverImageURL}
+              alt={story.title}
+              referrerPolicy="no-referrer"
+              className="w-full max-h-[420px] object-cover"
+            />
+          </div>
+        )}
       </header>
 
       {/* Chapter Components Switcher */}
@@ -277,6 +289,16 @@ export function StoryReader({
         ) : currentChapter ? (
           <>
             <h2 className="text-lg font-semibold text-white">{currentChapter.title}</h2>
+            {currentChapter.imageURL && (
+              <div className="mt-5 rounded-lg overflow-hidden bg-[#141621]">
+                <img
+                  src={currentChapter.imageURL}
+                  alt={currentChapter.title}
+                  referrerPolicy="no-referrer"
+                  className="w-full max-h-[460px] object-cover"
+                />
+              </div>
+            )}
             <div className="mt-5 space-y-4 text-[15px] leading-[1.8] text-[#dde1ee] whitespace-pre-line">
               {currentChapter.content}
             </div>
@@ -385,7 +407,7 @@ export function StoryReader({
                 </div>
                 {user &&
                   story.source === 'firebase' &&
-                  (user.uid === comment.authorId || user.uid === story.authorId) && (
+                  (user.uid === comment.authorId || user.uid === story.authorId || isAdmin) && (
                     <button
                       type="button"
                       onClick={() => void deleteStoryComment(story.id, comment.id)}

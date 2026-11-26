@@ -7,19 +7,30 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import { auth, googleProvider } from '../firebase/config';
 import { ensureUserDocuments, updateUserProfileRecord } from '../firebase/repository';
 import type { UserPrivate, UserProfile } from '../types/story';
+import { isAdminAccount } from '../utils/storyUtils';
 
 interface AuthContextValue {
   user: User | null;
   profile: UserProfile | null;
   privateInfo: UserPrivate | null;
+  isAdmin: boolean;
   authReady: boolean;
   authLoading: boolean;
   authError: string | null;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
   signOutUser: () => Promise<void>;
   saveProfile: (updates: {
     displayName: string;
@@ -51,6 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (!firebaseUser.emailVerified) {
+        setProfile(null);
+        setPrivateInfo(null);
+        setAuthReady(true);
+        return;
+      }
+
       try {
         const docs = await ensureUserDocuments(firebaseUser);
         setProfile(docs.profile);
@@ -76,6 +94,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!msg.includes('popup-closed-by-user')) {
         setAuthError(msg);
       }
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : 'Sign-in failed.';
+      if (raw.includes('auth/operation-not-allowed')) {
+        setAuthError(
+          'Email/Password sign-in is not enabled in Firebase Authentication yet. Enable it in Firebase Console or use Continue with Google.'
+        );
+      } else if (
+        raw.includes('auth/invalid-credential') ||
+        raw.includes('auth/wrong-password') ||
+        raw.includes('auth/user-not-found')
+      ) {
+        setAuthError('Invalid email or password. Make sure the account exists in Firebase Authentication.');
+      } else {
+        setAuthError(raw);
+      }
+      throw err;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const resendVerificationEmail = useCallback(async () => {
+    if (!auth.currentUser) return;
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await sendEmailVerification(auth.currentUser);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Unable to send verification email.');
+      throw err;
     } finally {
       setAuthLoading(false);
     }
@@ -117,15 +175,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
+  const isAdmin = useMemo(
+    () => isAdminAccount(user?.email, user?.emailVerified),
+    [user?.email, user?.emailVerified]
+  );
+
   const value = useMemo(
     () => ({
       user,
       profile,
       privateInfo,
+      isAdmin,
       authReady,
       authLoading,
       authError,
       signInWithGoogle,
+      signInWithEmail,
+      resendVerificationEmail,
       signOutUser,
       saveProfile,
     }),
@@ -133,10 +199,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       privateInfo,
+      isAdmin,
       authReady,
       authLoading,
       authError,
       signInWithGoogle,
+      signInWithEmail,
+      resendVerificationEmail,
       signOutUser,
       saveProfile,
     ]

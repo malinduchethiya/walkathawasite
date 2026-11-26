@@ -217,3 +217,89 @@ test('all 40 starter story bundles strictly satisfy Firestore blueprint and ID r
     }
   }
 });
+
+test('isAdminAccount strictly requires matching email and verified status', async () => {
+  const { isAdminAccount } = await import('./storyUtils');
+  assert.equal(isAdminAccount('merlinfiverr0@gmail.com', true), true);
+  assert.equal(isAdminAccount('MERLINFIVERR0@GMAIL.COM', true), true);
+  assert.equal(isAdminAccount('merlinfiverr0@gmail.com', false), false);
+  assert.equal(isAdminAccount('other@gmail.com', true), false);
+  assert.equal(isAdminAccount(null, true), false);
+});
+
+test('isSafeImageUrl blocks unsafe schemes and allows https and root-relative paths', async () => {
+  const { isSafeImageUrl } = await import('./storyUtils');
+  assert.equal(isSafeImageUrl(''), true);
+  assert.equal(isSafeImageUrl('https://example.com/photo.jpg'), true);
+  assert.equal(isSafeImageUrl('/assets/cover.png'), true);
+  assert.equal(isSafeImageUrl('javascript:alert(1)'), false);
+  assert.equal(isSafeImageUrl('data:image/svg+xml,<svg/>'), false);
+  assert.equal(isSafeImageUrl('http://insecure.example.com/a.jpg'), false);
+  assert.equal(isSafeImageUrl('//evil.example.com/a.jpg'), false);
+});
+
+test('slugifyCategory and mergeCategories support custom and non-Latin categories', async () => {
+  const { slugifyCategory, mergeCategories } = await import('./storyUtils');
+  assert.equal(slugifyCategory('Historical Fiction'), 'historical-fiction');
+  const sinhalaSlug = slugifyCategory('සිංහල කතා');
+  assert.match(sinhalaSlug, BLUEPRINT_LIMITS.CATEGORY_SLUG_PATTERN);
+
+  const merged = mergeCategories(
+    [
+      {
+        id: 'cat_1',
+        name: 'Historical Fiction',
+        slug: 'historical-fiction',
+        createdBy: 'u1',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      },
+      {
+        id: 'cat_2',
+        name: 'drama',
+        slug: 'drama',
+        createdBy: 'u1',
+        createdAtMs: 2,
+        updatedAtMs: 2,
+      },
+    ],
+    []
+  );
+  assert.ok(merged.includes('Historical Fiction'));
+  assert.equal(merged.filter((c) => c.toLowerCase() === 'drama').length, 1);
+});
+
+test('validateStoryInput accepts custom categories and rejects unsafe image URLs', () => {
+  const ok = validateStoryInput({
+    title: 'Harbour Tales',
+    excerpt: 'Stories collected along the southern coast over five seasons.',
+    category: 'Coastal Legends',
+    coverImageURL: 'https://example.com/harbour.jpg',
+    status: 'published',
+    chapters: [
+      {
+        title: 'Part 1',
+        content: 'Lanterns flickered above the breakwater as the night boat returned.',
+        imageURL: 'https://example.com/lantern.jpg',
+      },
+    ],
+  });
+  assert.deepEqual(ok, []);
+
+  const bad = validateStoryInput({
+    title: 'Harbour Tales',
+    excerpt: 'Stories collected along the southern coast over five seasons.',
+    category: 'Coastal Legends',
+    coverImageURL: 'javascript:alert(1)',
+    status: 'published',
+    chapters: [
+      {
+        title: 'Part 1',
+        content: 'Lanterns flickered above the breakwater as the night boat returned.',
+        imageURL: 'data:text/html,boom',
+      },
+    ],
+  });
+  assert.equal(bad.length, 2);
+});
+

@@ -114,17 +114,15 @@
         },
         "category": {
           "type": "string",
-          "enum": [
-            "Drama",
-            "Mystery",
-            "Sci-Fi",
-            "Folklore",
-            "Slice of Life",
-            "Poetry",
-            "Adventure",
-            "Romance"
-          ],
-          "description": "Story category shown in the top badge."
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Story category shown in the top badge (default or custom)."
+        },
+        "coverImageURL": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Optional HTTPS or root-relative cover image URL for the story."
         },
         "authorId": {
           "type": "string",
@@ -228,6 +226,12 @@
           "maxLength": 25000,
           "description": "Full text content of the chapter."
         },
+        "imageURL": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Optional HTTPS or root-relative image URL embedded in this chapter."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -249,6 +253,69 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CategoryRecord": {
+      "title": "CategoryRecord",
+      "description": "A custom or curated story category managed from the admin panel.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Display label of the category."
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "pattern": "^[a-z0-9_\\-]+$",
+          "description": "Normalized identifier slug."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the admin who created the category."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active"],
+          "description": "Active status for secure O(1) public list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated."
+        }
+      },
+      "required": ["name", "slug", "createdBy", "status", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Server-provisioned administrator marker record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin Firebase Auth UID."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Administrator role."
+        }
+      },
+      "required": ["uid", "role"]
     },
     "StoryComment": {
       "title": "StoryComment",
@@ -353,6 +420,14 @@
     "/users/{userId}/bookmarks/{storyId}": {
       "schema": { "$ref": "#/entities/UserBookmark" },
       "description": "Owner-only saved story bookmarks."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Read-only admin registry checked by Firestore rules."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/CategoryRecord" },
+      "description": "Custom story categories created and managed by administrators."
     },
     "/stories/{storyId}": {
       "schema": { "$ref": "#/entities/Story" },

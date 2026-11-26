@@ -17,7 +17,7 @@ export function Header({ sidebarOpen, onNavigate, onToggleSidebar }: HeaderProps
           onClick={() => onNavigate('stories')}
           className="text-[16px] sm:text-[17px] font-bold tracking-tight text-white hover:text-[#c7b3ec] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#8d64cc] rounded"
         >
-          KathaGrid
+          walkathawa
         </button>
 
         <button

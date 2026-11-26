@@ -9,11 +9,20 @@ export const STORY_CATEGORIES = [
   'Romance',
 ] as const;
 
-export type StoryCategory = (typeof STORY_CATEGORIES)[number];
+export type StoryCategory = string;
 
 export type StoryStatus = 'draft' | 'published';
 
 export type SortOption = 'newest' | 'popular';
+
+export interface CategoryRecord {
+  id: string;
+  name: string;
+  slug: string;
+  createdBy: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
 
 export interface UserProfile {
   uid: string;
@@ -38,6 +47,7 @@ export interface Story {
   title: string;
   excerpt: string;
   category: StoryCategory;
+  coverImageURL?: string;
   authorId: string;
   authorName: string;
   authorPhotoURL: string;
@@ -58,6 +68,7 @@ export interface StoryChapter {
   chapterNumber: number;
   title: string;
   content: string;
+  imageURL?: string;
   createdAtMs: number;
   updatedAtMs: number;
 }
@@ -84,12 +95,17 @@ export interface ChapterDraftInput {
   id?: string;
   title: string;
   content: string;
+  imageURL?: string;
 }
 
 export interface StoryDraftInput {
   title: string;
   excerpt: string;
   category: StoryCategory;
+  coverImageURL?: string;
   status: StoryStatus;
   chapters: ChapterDraftInput[];
+  authorName?: string;
+  authorVerified?: boolean;
+  views?: number;
 }

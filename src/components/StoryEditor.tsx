@@ -2,17 +2,17 @@ import { useState, type FormEvent } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { saveStoryWithChapters } from '../firebase/repository';
-import {
-  STORY_CATEGORIES,
-  type ChapterDraftInput,
-  type Story,
-  type StoryCategory,
-  type StoryChapter,
-  type StoryStatus,
+import type {
+  ChapterDraftInput,
+  Story,
+  StoryCategory,
+  StoryChapter,
+  StoryStatus,
 } from '../types/story';
 import { BLUEPRINT_LIMITS, validateStoryInput } from '../utils/storyUtils';
 
 interface StoryEditorProps {
+  categories: string[];
   editingStory: Story | null;
   editingChapters: StoryChapter[];
   onSaved: (storyId: string) => void;
@@ -20,6 +20,7 @@ interface StoryEditorProps {
 }
 
 export function StoryEditor({
+  categories,
   editingStory,
   editingChapters,
   onSaved,
@@ -28,13 +29,21 @@ export function StoryEditor({
   const { user, profile, signInWithGoogle } = useAuth();
 
   const [title, setTitle] = useState(editingStory?.title ?? '');
-  const [category, setCategory] = useState<StoryCategory>(editingStory?.category ?? 'Drama');
+  const [category, setCategory] = useState<StoryCategory>(
+    editingStory?.category ?? categories[0] ?? 'Drama'
+  );
+  const [coverImageURL, setCoverImageURL] = useState(editingStory?.coverImageURL ?? '');
   const [status, setStatus] = useState<StoryStatus>(editingStory?.status ?? 'published');
   const [excerpt, setExcerpt] = useState(editingStory?.excerpt ?? '');
   const [chapters, setChapters] = useState<ChapterDraftInput[]>(() =>
     editingChapters.length > 0
-      ? editingChapters.map((c) => ({ id: c.id, title: c.title, content: c.content }))
-      : [{ title: 'Part 1', content: '' }]
+      ? editingChapters.map((c) => ({
+          id: c.id,
+          title: c.title,
+          content: c.content,
+          imageURL: c.imageURL ?? '',
+        }))
+      : [{ title: 'Part 1', content: '', imageURL: '' }]
   );
 
   const [errors, setErrors] = useState<string[]>([]);
@@ -43,7 +52,7 @@ export function StoryEditor({
   const handleAddChapter = () => {
     setChapters((prev) => [
       ...prev,
-      { title: `Part ${prev.length + 1}`, content: '' },
+      { title: `Part ${prev.length + 1}`, content: '', imageURL: '' },
     ]);
   };
 
@@ -52,7 +61,11 @@ export function StoryEditor({
     setChapters((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  const handleChapterChange = (index: number, field: 'title' | 'content', value: string) => {
+  const handleChapterChange = (
+    index: number,
+    field: 'title' | 'content' | 'imageURL',
+    value: string
+  ) => {
     setChapters((prev) =>
       prev.map((ch, idx) => (idx === index ? { ...ch, [field]: value } : ch))
     );
@@ -64,6 +77,7 @@ export function StoryEditor({
       title,
       excerpt,
       category,
+      coverImageURL,
       status,
       chapters,
     });
@@ -84,7 +98,7 @@ export function StoryEditor({
       const savedId = await saveStoryWithChapters(
         user,
         profile,
-        { title, excerpt, category, status, chapters },
+        { title, excerpt, category, coverImageURL, status, chapters },
         editingStory?.id
       );
       onSaved(savedId);
@@ -172,7 +186,7 @@ export function StoryEditor({
                 onChange={(e) => setCategory(e.target.value as StoryCategory)}
                 className="w-full bg-[#141621] text-sm text-white px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none cursor-pointer"
               >
-                {STORY_CATEGORIES.map((cat) => (
+                {categories.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -194,6 +208,21 @@ export function StoryEditor({
                 <option value="draft">Draft (Only You)</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label htmlFor="story-cover-image" className="block text-xs font-medium text-[#c2c6d4] mb-1.5">
+              Cover Image URL (Optional)
+            </label>
+            <input
+              id="story-cover-image"
+              type="url"
+              maxLength={BLUEPRINT_LIMITS.IMAGE_URL_MAX}
+              value={coverImageURL}
+              onChange={(e) => setCoverImageURL(e.target.value)}
+              placeholder="https://example.com/cover.jpg"
+              className="w-full bg-[#141621] text-sm text-white placeholder-[#7f859b] px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none"
+            />
           </div>
 
           <div>
