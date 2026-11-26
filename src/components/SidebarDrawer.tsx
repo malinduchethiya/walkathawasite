@@ -45,9 +45,6 @@ export function SidebarDrawer({
 
   const navItems: { id: AppView; label: string }[] = [
     { id: 'stories', label: 'Stories' },
-    { id: 'write', label: 'Write' },
-    { id: 'saved', label: savedCount > 0 ? `Saved (${savedCount})` : 'Saved' },
-    { id: 'profile', label: 'Profile' },
   ];
 
   const handleNavClick = (view: AppView) => {

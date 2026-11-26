@@ -41,7 +41,7 @@ interface CachedSitemapData {
 }
 
 const SITEMAP_CACHE_TTL_MS = 60_000;
-const FIRESTORE_FETCH_TIMEOUT_MS = 4_000;
+const FIRESTORE_FETCH_TIMEOUT_MS = 10_000;
 
 let sitemapCache: CachedSitemapData | null = null;
 
@@ -89,11 +89,15 @@ async function runPublicFirestoreQuery(
   }
 }
 
-async function fetchPublicSitemapData(): Promise<{
+async function fetchPublicSitemapData(forceRefresh: boolean = false): Promise<{
   stories: SitemapStoryInput[];
   categories: string[];
 }> {
-  if (sitemapCache && Date.now() - sitemapCache.fetchedAtMs < SITEMAP_CACHE_TTL_MS) {
+  if (
+    !forceRefresh &&
+    sitemapCache &&
+    Date.now() - sitemapCache.fetchedAtMs < SITEMAP_CACHE_TTL_MS
+  ) {
     return {
       stories: sitemapCache.stories,
       categories: sitemapCache.categories,
@@ -163,6 +167,12 @@ async function fetchPublicSitemapData(): Promise<{
     }
   }
 
+  stories.sort((a, b) => {
+    const aMs = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bMs = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return bMs - aMs;
+  });
+
   const categories = Array.from(categoryMap.values());
   sitemapCache = {
     fetchedAtMs: Date.now(),
@@ -201,7 +211,8 @@ async function startServer() {
 
   app.get('/sitemap.xml', async (req, res) => {
     const origin = getRequestOrigin(req);
-    const { stories, categories } = await fetchPublicSitemapData();
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const { stories, categories } = await fetchPublicSitemapData(forceRefresh);
     const entries = buildSitemapEntries({
       origin,
       stories,
@@ -209,7 +220,10 @@ async function startServer() {
     });
     const xml = buildSitemapXml(entries);
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader(
+      'Cache-Control',
+      forceRefresh ? 'no-cache, no-store, must-revalidate' : 'public, max-age=300'
+    );
     res.status(200).send(xml);
   });
 

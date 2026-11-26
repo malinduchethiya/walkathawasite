@@ -48,6 +48,7 @@ import {
   validateSeoInput,
   validateStoryInput,
 } from '../utils/storyUtils';
+import { buildSitemapEntries, buildSitemapXml } from '../utils/seoFiles';
 
 interface AdminPanelProps {
   customCategories: CategoryRecord[];
@@ -2071,6 +2072,41 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                           : '/robots.txt'}
                       </a>
                     </div>
+                  </div>
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-[11px] text-[#8c92a6] tabular-nums">
+                      {allStories.filter((s) => s.status === 'published').length} published stories
+                      indexed
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const published = allStories
+                          .filter((s) => s.status === 'published')
+                          .map((s) => ({ id: s.id, updatedAt: s.updatedAtMs }));
+                        const entries = buildSitemapEntries({
+                          origin: window.location.origin,
+                          stories: published,
+                          categories: allCategories,
+                        });
+                        const xml = buildSitemapXml(entries);
+                        const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = 'sitemap.xml';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                        setAdminNotice(
+                          `Downloaded sitemap.xml (${entries.length} URLs including ${published.length} published stories).`
+                        );
+                      }}
+                      className="px-3.5 py-2 text-xs font-medium bg-[#141621] hover:bg-[#25293b] border border-[#2d3248] text-[#e6e9f2] rounded-lg transition-colors cursor-pointer"
+                    >
+                      Download sitemap.xml
+                    </button>
                   </div>
                 </div>
               </section>
