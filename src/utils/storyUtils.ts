@@ -186,12 +186,25 @@ export function validateSeoInput(input: {
   return errors;
 }
 
-export function applySeoSettingsToDocument(settings: SiteSeoSettings): void {
+export function applySeoSettingsToDocument(
+  settings: SiteSeoSettings,
+  overrides?: {
+    title?: string;
+    description?: string;
+    canonicalUrl?: string;
+    robots?: string;
+  }
+): void {
   if (typeof document === 'undefined') return;
 
-  const title = settings.siteTitle.trim() || DEFAULT_SEO_SETTINGS.siteTitle;
-  const description = settings.metaDescription.trim() || DEFAULT_SEO_SETTINGS.metaDescription;
+  const title =
+    overrides?.title?.trim() || settings.siteTitle.trim() || DEFAULT_SEO_SETTINGS.siteTitle;
+  const description =
+    overrides?.description?.trim() ||
+    settings.metaDescription.trim() ||
+    DEFAULT_SEO_SETTINGS.metaDescription;
   const keywords = normalizeSeoKeywords(settings.keywords) || DEFAULT_SEO_SETTINGS.keywords;
+  const robots = overrides?.robots?.trim() || 'index, follow';
 
   document.title = title;
 
@@ -207,8 +220,27 @@ export function applySeoSettingsToDocument(settings: SiteSeoSettings): void {
 
   upsertMeta('name', 'description', description);
   upsertMeta('name', 'keywords', keywords);
+  upsertMeta('name', 'robots', robots);
   upsertMeta('property', 'og:title', title);
   upsertMeta('property', 'og:description', description);
+  upsertMeta('name', 'twitter:title', title);
+  upsertMeta('name', 'twitter:description', description);
+
+  const canonicalUrl =
+    overrides?.canonicalUrl ||
+    (typeof window !== 'undefined'
+      ? `${window.location.origin}${window.location.pathname}${window.location.search}`
+      : '');
+  if (canonicalUrl) {
+    upsertMeta('property', 'og:url', canonicalUrl);
+    let link = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      document.head.appendChild(link);
+    }
+    link.setAttribute('href', canonicalUrl);
+  }
 }
 
 export function formatCompactViews(views: number): string {

@@ -2035,6 +2035,44 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                     </button>
                   </div>
                 </form>
+
+                <div className="mt-6 bg-[#1d202e] rounded-xl p-6 space-y-3">
+                  <h2 className="text-sm font-semibold text-white">
+                    Google Search Console Indexing Files
+                  </h2>
+                  <p className="text-xs text-[#9ea4b8]">
+                    Submit the sitemap URL below in Google Search Console under Indexing &gt;
+                    Sitemaps. It updates automatically as stories are published.
+                  </p>
+                  <div className="space-y-2 pt-1 text-xs">
+                    <div className="flex items-center justify-between gap-3 bg-[#141621] border border-[#262a3d] rounded-lg px-3.5 py-2.5">
+                      <span className="text-[#9ea4b8]">Sitemap</span>
+                      <a
+                        href="/sitemap.xml"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#60a5fa] hover:underline break-all"
+                      >
+                        {typeof window !== 'undefined'
+                          ? `${window.location.origin}/sitemap.xml`
+                          : '/sitemap.xml'}
+                      </a>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 bg-[#141621] border border-[#262a3d] rounded-lg px-3.5 py-2.5">
+                      <span className="text-[#9ea4b8]">Robots.txt</span>
+                      <a
+                        href="/robots.txt"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#60a5fa] hover:underline break-all"
+                      >
+                        {typeof window !== 'undefined'
+                          ? `${window.location.origin}/robots.txt`
+                          : '/robots.txt'}
+                      </a>
+                    </div>
+                  </div>
+                </div>
               </section>
             )}
           </>

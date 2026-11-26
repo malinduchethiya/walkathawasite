@@ -33,12 +33,9 @@ import {
   filterAndSortStories,
   mergeCategories,
 } from './utils/storyUtils';
+import { buildCategoryPath, buildStoryPath, parseAppRoute } from './utils/seoFiles';
 
 const GUEST_BOOKMARKS_KEY = 'walkathawa_guest_bookmarks';
-
-function isAdminPath(pathname: string): boolean {
-  return /^\/admin(\/|$)/i.test(pathname);
-}
 
 function readGuestBookmarkIds(): string[] {
   try {
@@ -54,10 +51,15 @@ function readGuestBookmarkIds(): string[] {
 function WalkathawaApp() {
   const { user, isAdmin, authReady } = useAuth();
 
-  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() =>
-    isAdminPath(window.location.pathname)
+  const initialRoute = useMemo(
+    () => parseAppRoute(window.location.pathname, window.location.search),
+    []
   );
-  const [activeView, setActiveView] = useState<AppView>('stories');
+
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(initialRoute.isAdmin);
+  const [activeView, setActiveView] = useState<AppView>(
+    initialRoute.storyId ? 'read' : 'stories'
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [firebaseStories, setFirebaseStories] = useState<Story[]>([]);
   const [customCategories, setCustomCategories] = useState<CategoryRecord[]>([]);
@@ -66,11 +68,13 @@ function WalkathawaApp() {
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  const [selectedCategory, setSelectedCategory] = useState<StoryCategory | 'All'>('All');
+  const [selectedCategory, setSelectedCategory] = useState<StoryCategory | 'All'>(
+    initialRoute.category ?? 'All'
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
 
-  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(initialRoute.storyId);
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [editingChapters, setEditingChapters] = useState<StoryChapter[]>([]);
 
@@ -79,7 +83,17 @@ function WalkathawaApp() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setIsAdminRoute(isAdminPath(window.location.pathname));
+      const parsed = parseAppRoute(window.location.pathname, window.location.search);
+      setIsAdminRoute(parsed.isAdmin);
+      if (parsed.isAdmin) return;
+      if (parsed.storyId) {
+        setSelectedStoryId(parsed.storyId);
+        setActiveView('read');
+      } else {
+        setSelectedStoryId(null);
+        setSelectedCategory(parsed.category ?? 'All');
+        setActiveView('stories');
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -88,6 +102,8 @@ function WalkathawaApp() {
   const exitAdminRoute = useCallback(() => {
     window.history.pushState({}, '', '/');
     setIsAdminRoute(false);
+    setSelectedStoryId(null);
+    setSelectedCategory('All');
     setActiveView('stories');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
@@ -119,11 +135,10 @@ function WalkathawaApp() {
     return () => unsubscribe();
   }, []);
 
-  // Live subscription to Firestore /siteSettings/seo document -> syncs <head> meta keywords, title & description
+  // Live subscription to Firestore /siteSettings/seo document
   useEffect(() => {
     const unsubscribe = subscribeSiteSeoSettings((settings) => {
       setSeoSettings(settings);
-      applySeoSettingsToDocument(settings);
     });
     return () => unsubscribe();
   }, []);
@@ -194,18 +209,76 @@ function WalkathawaApp() {
     );
   }, [selectedStoryId, firebaseStories, userStories]);
 
-  const handleNavigate = useCallback((view: AppView) => {
-    if (view !== 'write') {
-      setEditingStory(null);
-      setEditingChapters([]);
+  useEffect(() => {
+    const origin = window.location.origin;
+    if (isAdminRoute) {
+      applySeoSettingsToDocument(seoSettings, {
+        title: 'Admin — walkathawa',
+        canonicalUrl: `${origin}/admin`,
+        robots: 'noindex, nofollow',
+      });
+      return;
     }
-    setActiveView(view);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+
+    if (activeView === 'read' && selectedStory) {
+      applySeoSettingsToDocument(seoSettings, {
+        title: `${selectedStory.title} — walkathawa`,
+        description: selectedStory.excerpt,
+        canonicalUrl: `${origin}${buildStoryPath(selectedStory.id)}`,
+        robots: 'index, follow',
+      });
+      return;
+    }
+
+    if (activeView === 'stories' && selectedCategory !== 'All') {
+      applySeoSettingsToDocument(seoSettings, {
+        title: `${selectedCategory} Stories — walkathawa`,
+        canonicalUrl: `${origin}${buildCategoryPath(selectedCategory)}`,
+        robots: 'index, follow',
+      });
+      return;
+    }
+
+    applySeoSettingsToDocument(seoSettings, {
+      canonicalUrl: `${origin}/`,
+      robots: 'index, follow',
+    });
+  }, [seoSettings, isAdminRoute, activeView, selectedStory, selectedCategory]);
+
+  const handleCategoryChange = useCallback((cat: StoryCategory | 'All') => {
+    setSelectedCategory(cat);
+    const nextPath = buildCategoryPath(cat);
+    if (`${window.location.pathname}${window.location.search}` !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
   }, []);
+
+  const handleNavigate = useCallback(
+    (view: AppView) => {
+      if (view !== 'write') {
+        setEditingStory(null);
+        setEditingChapters([]);
+      }
+      if (view === 'stories') {
+        setSelectedStoryId(null);
+        const nextPath = buildCategoryPath(selectedCategory);
+        if (`${window.location.pathname}${window.location.search}` !== nextPath) {
+          window.history.pushState({}, '', nextPath);
+        }
+      }
+      setActiveView(view);
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    },
+    [selectedCategory]
+  );
 
   const handleOpenStory = useCallback((story: Story) => {
     setSelectedStoryId(story.id);
     setActiveView('read');
+    const nextPath = buildStoryPath(story.id);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
@@ -257,6 +330,10 @@ function WalkathawaApp() {
     setEditingChapters([]);
     setSelectedStoryId(storyId);
     setActiveView('read');
+    const nextPath = buildStoryPath(storyId);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
@@ -288,7 +365,7 @@ function WalkathawaApp() {
         sortBy={sortBy}
         onClose={() => setSidebarOpen(false)}
         onNavigate={handleNavigate}
-        onCategoryChange={setSelectedCategory}
+        onCategoryChange={handleCategoryChange}
         onSearchChange={setSearchQuery}
         onSortChange={setSortBy}
       />
@@ -322,7 +399,7 @@ function WalkathawaApp() {
                 : 'Try adjusting your search query or selecting another category.'
             }
             onClearFilters={() => {
-              setSelectedCategory('All');
+              handleCategoryChange('All');
               setSearchQuery('');
             }}
             onOpenStory={handleOpenStory}
@@ -340,7 +417,13 @@ function WalkathawaApp() {
           />
         )}
 
-        {activeView === 'read' && !selectedStory && (
+        {activeView === 'read' && !selectedStory && storiesLoading && (
+          <div className="max-w-md mx-auto px-6 py-20 text-center">
+            <p className="text-sm text-[#9ea4b8]">Loading story...</p>
+          </div>
+        )}
+
+        {activeView === 'read' && !selectedStory && !storiesLoading && (
           <div className="max-w-md mx-auto px-6 py-20 text-center">
             <p className="text-base font-medium text-white">Story not found</p>
             <button
