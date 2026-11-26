@@ -117,3 +117,16 @@ export interface StoryDraftInput {
   authorVerified?: boolean;
   views?: number;
 }
+
+export interface BulkImportStoryItem extends StoryDraftInput {
+  customId?: string;
+}
+
+export interface ParsedJsonStoriesResult {
+  stories: BulkImportStoryItem[];
+  totalChapters: number;
+  detectedCategories: string[];
+  skippedCount: number;
+  skippedReasons: string[];
+}
+

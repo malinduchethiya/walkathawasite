@@ -17,6 +17,7 @@ import {
 import type { User } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType } from './config';
 import type {
+  BulkImportStoryItem,
   CategoryRecord,
   SiteSeoSettings,
   Story,
@@ -978,3 +979,384 @@ export async function seedStarterStoriesToFirestore(
 
   return uploaded;
 }
+
+export interface BulkImportProgress {
+  processed: number;
+  uploaded: number;
+  skippedDuplicates: number;
+  failed: number;
+  total: number;
+}
+
+export interface BulkImportSummary extends BulkImportProgress {
+  createdCategories: string[];
+  failureMessages: string[];
+  cancelled: boolean;
+}
+
+const MAX_CHAPTERS_PER_BATCH = 6;
+const MAX_STORIES_PER_BATCH = 4;
+
+async function writeSingleImportedStory(
+  adminUser: User,
+  storyId: string,
+  item: BulkImportStoryItem
+): Promise<void> {
+  const cleanCategory = normalizeCategoryName(item.category) || 'Drama';
+  const cleanCover = (item.coverImageURL ?? '').trim().slice(0, BLUEPRINT_LIMITS.IMAGE_URL_MAX);
+  const authorName = (
+    item.authorName?.trim() ||
+    adminUser.displayName ||
+    'walkathawa'
+  ).slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX);
+  const authorPhotoURL = (adminUser.photoURL ?? '').slice(0, BLUEPRINT_LIMITS.PHOTO_URL_MAX);
+  const authorVerified = typeof item.authorVerified === 'boolean' ? item.authorVerified : true;
+  const safeViews = Math.min(
+    100_000_000,
+    Math.max(0, Math.floor(Number.isFinite(item.views) ? Number(item.views) : 0))
+  );
+
+  // Batch 1: story document + up to MAX_CHAPTERS_PER_BATCH chapters
+  const firstChapters = item.chapters.slice(0, MAX_CHAPTERS_PER_BATCH);
+  const firstBatch = writeBatch(db);
+  const storyRef = doc(db, 'stories', storyId);
+
+  firstBatch.set(storyRef, {
+    title: item.title.trim().slice(0, BLUEPRINT_LIMITS.STORY_TITLE_MAX),
+    excerpt: item.excerpt.trim().slice(0, BLUEPRINT_LIMITS.STORY_EXCERPT_MAX),
+    category: cleanCategory,
+    coverImageURL: cleanCover,
+    authorId: adminUser.uid,
+    authorName,
+    authorPhotoURL,
+    authorVerified,
+    views: safeViews,
+    chapterCount: item.chapters.length,
+    status: item.status,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  firstChapters.forEach((chapter, idx) => {
+    const chapterId = generateSafeDocId(`ch${idx + 1}`);
+    const chapterRef = doc(db, 'stories', storyId, 'chapters', chapterId);
+    const chImage = (chapter.imageURL ?? '').trim().slice(0, BLUEPRINT_LIMITS.IMAGE_URL_MAX);
+    firstBatch.set(chapterRef, {
+      storyId,
+      authorId: adminUser.uid,
+      status: item.status,
+      chapterNumber: idx + 1,
+      title: chapter.title.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_TITLE_MAX),
+      content: chapter.content.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_CONTENT_MAX),
+      imageURL: chImage,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  await firstBatch.commit();
+
+  // Subsequent batches for stories with > 6 branches/chapters
+  for (
+    let offset = MAX_CHAPTERS_PER_BATCH;
+    offset < item.chapters.length;
+    offset += MAX_CHAPTERS_PER_BATCH
+  ) {
+    const slice = item.chapters.slice(offset, offset + MAX_CHAPTERS_PER_BATCH);
+    const nextBatch = writeBatch(db);
+    slice.forEach((chapter, relIdx) => {
+      const chapterNumber = offset + relIdx + 1;
+      const chapterId = generateSafeDocId(`ch${chapterNumber}`);
+      const chapterRef = doc(db, 'stories', storyId, 'chapters', chapterId);
+      const chImage = (chapter.imageURL ?? '').trim().slice(0, BLUEPRINT_LIMITS.IMAGE_URL_MAX);
+      nextBatch.set(chapterRef, {
+        storyId,
+        authorId: adminUser.uid,
+        status: item.status,
+        chapterNumber,
+        title: chapter.title.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_TITLE_MAX),
+        content: chapter.content.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_CONTENT_MAX),
+        imageURL: chImage,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await nextBatch.commit();
+  }
+}
+
+export async function adminBulkImportStoriesToFirestore(
+  adminUser: User,
+  items: BulkImportStoryItem[],
+  options: {
+    existingStories: Story[];
+    existingCategories: string[];
+    skipExistingByTitle: boolean;
+    shouldCancel?: () => boolean;
+    onProgress?: (progress: BulkImportProgress) => void;
+  }
+): Promise<BulkImportSummary> {
+  const total = items.length;
+  let processed = 0;
+  let uploaded = 0;
+  let skippedDuplicates = 0;
+  let failed = 0;
+  const createdCategories: string[] = [];
+  const failureMessages: string[] = [];
+
+  const reportProgress = () => {
+    options.onProgress?.({
+      processed,
+      uploaded,
+      skippedDuplicates,
+      failed,
+      total,
+    });
+  };
+
+  if (total === 0) {
+    return {
+      processed: 0,
+      uploaded: 0,
+      skippedDuplicates: 0,
+      failed: 0,
+      total: 0,
+      createdCategories,
+      failureMessages,
+      cancelled: false,
+    };
+  }
+
+  // 1. Auto-create any new custom categories found in the JSON file
+  const knownCategories = new Set(options.existingCategories.map((c) => c.toLowerCase()));
+  for (const item of items) {
+    const cleanCat = normalizeCategoryName(item.category);
+    if (!cleanCat) continue;
+    const key = cleanCat.toLowerCase();
+    if (!knownCategories.has(key)) {
+      knownCategories.add(key);
+      try {
+        await createCategoryRecord(adminUser, cleanCat);
+        createdCategories.push(cleanCat);
+      } catch {
+        // Non-blocking if category creation fails
+      }
+    }
+  }
+
+  // 2. Filter duplicates and assign unique story document IDs
+  const existingTitles = new Set(
+    options.existingStories.map((s) => s.title.trim().toLowerCase())
+  );
+  const existingIds = new Set(options.existingStories.map((s) => s.id));
+
+  interface PreparedStory {
+    storyId: string;
+    item: BulkImportStoryItem;
+  }
+
+  const pending: PreparedStory[] = [];
+  for (const item of items) {
+    const titleKey = item.title.trim().toLowerCase();
+    if (
+      options.skipExistingByTitle &&
+      (existingTitles.has(titleKey) || (item.customId && existingIds.has(item.customId)))
+    ) {
+      skippedDuplicates += 1;
+      processed += 1;
+      continue;
+    }
+
+    existingTitles.add(titleKey);
+    const storyId =
+      item.customId && !existingIds.has(item.customId)
+        ? item.customId
+        : generateSafeDocId('story');
+    existingIds.add(storyId);
+    pending.push({ storyId, item });
+  }
+
+  reportProgress();
+
+  if (pending.length === 0) {
+    return {
+      processed,
+      uploaded,
+      skippedDuplicates,
+      failed,
+      total,
+      createdCategories,
+      failureMessages,
+      cancelled: false,
+    };
+  }
+
+  // 3. Group stories into safe multi-story batches (each batch <= 4 stories and <= 6 total chapters)
+  // Stories with > 6 chapters get their own dedicated chunk so they use multi-batch chapter writing
+  const chunks: PreparedStory[][] = [];
+  let currentChunk: PreparedStory[] = [];
+  let currentChunkChapters = 0;
+
+  for (const entry of pending) {
+    const chCount = entry.item.chapters.length;
+    if (chCount > MAX_CHAPTERS_PER_BATCH) {
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentChunkChapters = 0;
+      }
+      chunks.push([entry]);
+      continue;
+    }
+
+    if (
+      currentChunk.length >= MAX_STORIES_PER_BATCH ||
+      currentChunkChapters + chCount > MAX_CHAPTERS_PER_BATCH
+    ) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentChunkChapters = 0;
+    }
+
+    currentChunk.push(entry);
+    currentChunkChapters += chCount;
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  // 4. Execute chunks with controlled concurrency (3 workers) for fast 600+ story uploads
+  let chunkCursor = 0;
+  let cancelled = false;
+  const authorPhotoURL = (adminUser.photoURL ?? '').slice(0, BLUEPRINT_LIMITS.PHOTO_URL_MAX);
+
+  const processChunk = async (chunk: PreparedStory[]) => {
+    if (options.shouldCancel?.()) {
+      cancelled = true;
+      return;
+    }
+
+    // Single story with > 6 chapters uses multi-batch writer
+    if (chunk.length === 1 && chunk[0].item.chapters.length > MAX_CHAPTERS_PER_BATCH) {
+      const { storyId, item } = chunk[0];
+      try {
+        await writeSingleImportedStory(adminUser, storyId, item);
+        uploaded += 1;
+      } catch (err) {
+        failed += 1;
+        failureMessages.push(
+          `"${item.title}": ${err instanceof Error ? err.message : 'Write failed'}`
+        );
+      } finally {
+        processed += 1;
+        reportProgress();
+      }
+      return;
+    }
+
+    // Multi-story batch commit
+    try {
+      const batch = writeBatch(db);
+      for (const { storyId, item } of chunk) {
+        const cleanCategory = normalizeCategoryName(item.category) || 'Drama';
+        const cleanCover = (item.coverImageURL ?? '').trim().slice(0, BLUEPRINT_LIMITS.IMAGE_URL_MAX);
+        const authorName = (
+          item.authorName?.trim() ||
+          adminUser.displayName ||
+          'walkathawa'
+        ).slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX);
+        const authorVerified = typeof item.authorVerified === 'boolean' ? item.authorVerified : true;
+        const safeViews = Math.min(
+          100_000_000,
+          Math.max(0, Math.floor(Number.isFinite(item.views) ? Number(item.views) : 0))
+        );
+
+        const storyRef = doc(db, 'stories', storyId);
+        batch.set(storyRef, {
+          title: item.title.trim().slice(0, BLUEPRINT_LIMITS.STORY_TITLE_MAX),
+          excerpt: item.excerpt.trim().slice(0, BLUEPRINT_LIMITS.STORY_EXCERPT_MAX),
+          category: cleanCategory,
+          coverImageURL: cleanCover,
+          authorId: adminUser.uid,
+          authorName,
+          authorPhotoURL,
+          authorVerified,
+          views: safeViews,
+          chapterCount: item.chapters.length,
+          status: item.status,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        item.chapters.forEach((chapter, idx) => {
+          const chapterId = generateSafeDocId(`ch${idx + 1}`);
+          const chapterRef = doc(db, 'stories', storyId, 'chapters', chapterId);
+          const chImage = (chapter.imageURL ?? '').trim().slice(0, BLUEPRINT_LIMITS.IMAGE_URL_MAX);
+          batch.set(chapterRef, {
+            storyId,
+            authorId: adminUser.uid,
+            status: item.status,
+            chapterNumber: idx + 1,
+            title: chapter.title.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_TITLE_MAX),
+            content: chapter.content.trim().slice(0, BLUEPRINT_LIMITS.CHAPTER_CONTENT_MAX),
+            imageURL: chImage,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        });
+      }
+
+      await batch.commit();
+      uploaded += chunk.length;
+      processed += chunk.length;
+      reportProgress();
+    } catch {
+      // Fallback: retry each story in the chunk individually so one bad record never aborts the rest
+      for (const { storyId, item } of chunk) {
+        if (options.shouldCancel?.()) {
+          cancelled = true;
+          break;
+        }
+        try {
+          await writeSingleImportedStory(adminUser, storyId, item);
+          uploaded += 1;
+        } catch (err) {
+          failed += 1;
+          failureMessages.push(
+            `"${item.title}": ${err instanceof Error ? err.message : 'Write failed'}`
+          );
+        } finally {
+          processed += 1;
+          reportProgress();
+        }
+      }
+    }
+  };
+
+  const CONCURRENCY = 3;
+  const workers = Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, async () => {
+    while (chunkCursor < chunks.length) {
+      if (options.shouldCancel?.()) {
+        cancelled = true;
+        break;
+      }
+      const myIndex = chunkCursor;
+      chunkCursor += 1;
+      await processChunk(chunks[myIndex]);
+    }
+  });
+
+  await Promise.all(workers);
+
+  return {
+    processed,
+    uploaded,
+    skippedDuplicates,
+    failed,
+    total,
+    createdCategories,
+    failureMessages,
+    cancelled,
+  };
+}
+

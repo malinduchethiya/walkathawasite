@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  FileJson,
   Image as ImageIcon,
   Pencil,
   Plus,
   Search,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
+  adminBulkImportStoriesToFirestore,
   adminDeleteStoryWithChapters,
   adminQuickUpdateStoryCategory,
   adminSaveStoryWithChapters,
@@ -20,6 +23,8 @@ import {
   saveSiteSeoSettings,
   subscribeAllStoriesForAdmin,
   updateCategoryRecord,
+  type BulkImportProgress,
+  type BulkImportSummary,
 } from '../firebase/repository';
 import {
   STORY_CATEGORIES,
@@ -32,11 +37,13 @@ import {
 import {
   ADMIN_EMAIL,
   BLUEPRINT_LIMITS,
+  SAMPLE_BULK_IMPORT_JSON,
   formatCompactViews,
   formatRelativeTime,
   isSafeImageUrl,
   mergeCategories,
   normalizeCategoryName,
+  parseJsonStoriesPayload,
   parseSeoKeywords,
   validateSeoInput,
   validateStoryInput,
@@ -48,7 +55,9 @@ interface AdminPanelProps {
   onExitAdmin: () => void;
 }
 
-type AdminTab = 'stories' | 'categories' | 'seo';
+type AdminTab = 'stories' | 'import' | 'categories' | 'seo';
+
+const ADMIN_STORIES_PER_PAGE = 50;
 
 export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: AdminPanelProps) {
   const {
@@ -75,10 +84,11 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
 
-  // Story list filters
+  // Story list filters & pagination
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [statusFilter, setStatusFilter] = useState<'all' | StoryStatus>('all');
+  const [adminPage, setAdminPage] = useState(1);
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
   const [busyStoryId, setBusyStoryId] = useState<string | null>(null);
 
@@ -114,6 +124,18 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
   const [seoKeywordsInput, setSeoKeywordsInput] = useState(seoSettings.keywords);
   const [savingSeo, setSavingSeo] = useState(false);
 
+  // Bulk JSON Import state
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cancelImportRef = useRef(false);
+  const [jsonFileName, setJsonFileName] = useState<string>('');
+  const [rawJsonText, setRawJsonText] = useState<string>('');
+  const [importDefaultCategory, setImportDefaultCategory] = useState<string>('Drama');
+  const [importDefaultStatus, setImportDefaultStatus] = useState<StoryStatus>('published');
+  const [skipExistingByTitle, setSkipExistingByTitle] = useState<boolean>(true);
+  const [importingJson, setImportingJson] = useState<boolean>(false);
+  const [importProgress, setImportProgress] = useState<BulkImportProgress | null>(null);
+  const [importSummary, setImportSummary] = useState<BulkImportSummary | null>(null);
+
   useEffect(() => {
     setSeoTitle(seoSettings.siteTitle);
     setSeoDescription(seoSettings.metaDescription);
@@ -123,6 +145,16 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
   const parsedSeoKeywordList = useMemo(
     () => parseSeoKeywords(seoKeywordsInput),
     [seoKeywordsInput]
+  );
+
+  const parsedJsonPreview = useMemo(
+    () =>
+      parseJsonStoriesPayload(rawJsonText, {
+        defaultCategory: importDefaultCategory,
+        defaultStatus: importDefaultStatus,
+        defaultAuthorName: user?.displayName || 'walkathawa',
+      }),
+    [rawJsonText, importDefaultCategory, importDefaultStatus, user?.displayName]
   );
 
   useEffect(() => {
@@ -164,6 +196,17 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
         .includes(q);
     });
   }, [allStories, searchQuery, categoryFilter, statusFilter]);
+
+  useEffect(() => {
+    setAdminPage(1);
+  }, [searchQuery, categoryFilter, statusFilter]);
+
+  const adminTotalPages = Math.max(1, Math.ceil(filteredStories.length / ADMIN_STORIES_PER_PAGE));
+  const safeAdminPage = Math.min(adminPage, adminTotalPages);
+  const visibleAdminStories = useMemo(() => {
+    const start = (safeAdminPage - 1) * ADMIN_STORIES_PER_PAGE;
+    return filteredStories.slice(start, start + ADMIN_STORIES_PER_PAGE);
+  }, [filteredStories, safeAdminPage]);
 
   const handleEmailLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -443,6 +486,91 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
     } finally {
       setSavingSeo(false);
     }
+  };
+
+  const handleJsonFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAdminError(null);
+    setAdminNotice(null);
+    setImportSummary(null);
+    setImportProgress(null);
+
+    try {
+      const text = await file.text();
+      setJsonFileName(file.name);
+      setRawJsonText(text);
+    } catch (err) {
+      setAdminError(
+        err instanceof Error ? err.message : 'Unable to read the selected JSON file.'
+      );
+    }
+  };
+
+  const handleLoadSampleJson = () => {
+    setAdminError(null);
+    setAdminNotice(null);
+    setImportSummary(null);
+    setImportProgress(null);
+    setJsonFileName('sample-stories.json');
+    setRawJsonText(SAMPLE_BULK_IMPORT_JSON);
+  };
+
+  const handleClearJsonImport = () => {
+    setJsonFileName('');
+    setRawJsonText('');
+    setImportSummary(null);
+    setImportProgress(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleStartBulkImport = async () => {
+    if (!user || parsedJsonPreview.stories.length === 0) return;
+
+    cancelImportRef.current = false;
+    setImportingJson(true);
+    setAdminError(null);
+    setAdminNotice(null);
+    setImportSummary(null);
+    setImportProgress({
+      processed: 0,
+      uploaded: 0,
+      skippedDuplicates: 0,
+      failed: 0,
+      total: parsedJsonPreview.stories.length,
+    });
+
+    try {
+      const summary = await adminBulkImportStoriesToFirestore(user, parsedJsonPreview.stories, {
+        existingStories: allStories,
+        existingCategories: allCategories,
+        skipExistingByTitle,
+        shouldCancel: () => cancelImportRef.current,
+        onProgress: (prog) => {
+          setImportProgress({ ...prog });
+        },
+      });
+      setImportSummary(summary);
+      if (summary.cancelled) {
+        setAdminNotice(
+          `Import stopped: ${summary.uploaded} stories uploaded to Firestore (${summary.skippedDuplicates} duplicates skipped).`
+        );
+      } else {
+        setAdminNotice(
+          `Bulk import complete: ${summary.uploaded} individual stories uploaded to Firestore (${summary.skippedDuplicates} duplicates skipped, ${summary.failed} failed).`
+        );
+      }
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Bulk JSON import failed.');
+    } finally {
+      setImportingJson(false);
+    }
+  };
+
+  const handleStopBulkImport = () => {
+    cancelImportRef.current = true;
   };
 
   // Auth loading state
@@ -1051,7 +1179,7 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
           <>
             {/* Top Tabs & Action */}
             <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-              <div className="flex items-center gap-2" role="tablist" aria-label="Admin sections">
+              <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Admin sections">
                 <button
                   type="button"
                   role="tab"
@@ -1064,6 +1192,20 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                   }`}
                 >
                   Stories ({allStories.length})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'import'}
+                  onClick={() => setActiveTab('import')}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                    activeTab === 'import'
+                      ? 'bg-[#8d64cc] text-white'
+                      : 'bg-[#1d202e] text-[#b2b6c7] hover:text-white'
+                  }`}
+                >
+                  <FileJson className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Bulk JSON Import</span>
                 </button>
                 <button
                   type="button"
@@ -1094,14 +1236,24 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
               </div>
 
               {activeTab === 'stories' && (
-                <button
-                  type="button"
-                  onClick={openNewStoryEditor}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg transition-colors cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>New Story</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('import')}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-[#1d202e] hover:bg-[#25293b] border border-[#2d3248] text-[#e6e9f2] rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Import JSON</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openNewStoryEditor}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>New Story</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1161,7 +1313,7 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                       No stories match the current filters.
                     </div>
                   ) : (
-                    filteredStories.map((story) => (
+                    visibleAdminStories.map((story) => (
                       <div
                         key={story.id}
                         className="p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
@@ -1258,6 +1410,366 @@ export function AdminPanel({ customCategories, seoSettings, onExitAdmin }: Admin
                         </div>
                       </div>
                     ))
+                  )}
+                </div>
+
+                {adminTotalPages > 1 && (
+                  <div className="flex items-center justify-between bg-[#1d202e] rounded-xl px-4 py-3 text-xs text-[#b2b6c7]">
+                    <span className="tabular-nums">
+                      Page {safeAdminPage} of {adminTotalPages} ({filteredStories.length} stories)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={safeAdminPage <= 1}
+                        onClick={() => setAdminPage((p) => Math.max(1, p - 1))}
+                        className="px-3 py-1.5 bg-[#141621] hover:bg-[#25293b] border border-[#2d3248] text-white rounded-lg disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeAdminPage >= adminTotalPages}
+                        onClick={() => setAdminPage((p) => Math.min(adminTotalPages, p + 1))}
+                        className="px-3 py-1.5 bg-[#141621] hover:bg-[#25293b] border border-[#2d3248] text-white rounded-lg disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            ) : activeTab === 'import' ? (
+              /* Bulk JSON Story Importer (Supports 600+ Stories & Branches) */
+              <section className="max-w-4xl space-y-6">
+                <div className="bg-[#1d202e] rounded-xl p-6 space-y-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-white">
+                        Bulk JSON Story Importer
+                      </h2>
+                      <p className="mt-1 text-xs text-[#9ea4b8] leading-relaxed">
+                        Upload a <code className="text-[#d5d9e6]">.json</code> file containing an
+                        array of stories (supports 600+ stories per file) with{' '}
+                        <code className="text-[#d5d9e6]">title</code>,{' '}
+                        <code className="text-[#d5d9e6]">image</code>,{' '}
+                        <code className="text-[#d5d9e6]">category</code>, and{' '}
+                        <code className="text-[#d5d9e6]">branches</code> (or{' '}
+                        <code className="text-[#d5d9e6]">chapters</code> /{' '}
+                        <code className="text-[#d5d9e6]">parts</code> /{' '}
+                        <code className="text-[#d5d9e6]">story</code>). Each entry is validated and
+                        uploaded to Firestore as an individual story with all of its branches.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={importingJson}
+                        onClick={handleLoadSampleJson}
+                        className="px-3 py-1.5 text-xs font-medium bg-[#141621] hover:bg-[#25293b] border border-[#2d3248] text-[#e6e9f2] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Load Sample JSON
+                      </button>
+                      {rawJsonText.trim() && (
+                        <button
+                          type="button"
+                          disabled={importingJson}
+                          onClick={handleClearJsonImport}
+                          className="px-3 py-1.5 text-xs font-medium bg-[#141621] hover:bg-[#2e1b24] border border-[#4a2632] text-[#f28b9c] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* File Upload Picker */}
+                  <div>
+                    <label
+                      htmlFor="admin-json-file-input"
+                      className="block text-xs font-medium text-[#c2c6d4] mb-1.5"
+                    >
+                      Select JSON File (.json)
+                    </label>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-[#141621] border border-[#2a2e42] rounded-lg p-3.5">
+                      <input
+                        ref={fileInputRef}
+                        id="admin-json-file-input"
+                        type="file"
+                        accept=".json,application/json"
+                        disabled={importingJson}
+                        onChange={(e) => void handleJsonFileChange(e)}
+                        className="text-xs text-[#d5d9e6] file:mr-3 file:px-3.5 file:py-1.5 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-[#8d64cc] file:text-white hover:file:bg-[#7d54be] file:cursor-pointer cursor-pointer"
+                      />
+                      {jsonFileName && (
+                        <span className="text-xs text-[#9ea4b8] truncate">
+                          Loaded: <strong className="text-white">{jsonFileName}</strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Import Default Options */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                    <div>
+                      <label
+                        htmlFor="import-default-category"
+                        className="block text-xs font-medium text-[#c2c6d4] mb-1.5"
+                      >
+                        Fallback Category (if omitted in JSON)
+                      </label>
+                      <select
+                        id="import-default-category"
+                        disabled={importingJson}
+                        value={importDefaultCategory}
+                        onChange={(e) => setImportDefaultCategory(e.target.value)}
+                        className="w-full bg-[#141621] text-sm text-white px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none cursor-pointer"
+                      >
+                        {allCategories.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="import-default-status"
+                        className="block text-xs font-medium text-[#c2c6d4] mb-1.5"
+                      >
+                        Default Visibility
+                      </label>
+                      <select
+                        id="import-default-status"
+                        disabled={importingJson}
+                        value={importDefaultStatus}
+                        onChange={(e) => setImportDefaultStatus(e.target.value as StoryStatus)}
+                        className="w-full bg-[#141621] text-sm text-white px-3.5 py-2.5 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none cursor-pointer"
+                      >
+                        <option value="published">Published (Public)</option>
+                        <option value="draft">Draft (Hidden)</option>
+                      </select>
+                    </div>
+
+                    <label className="flex items-center gap-2.5 h-[42px] px-3.5 bg-[#141621] rounded-lg border border-[#2a2e42] text-xs text-[#d5d9e6] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        disabled={importingJson}
+                        checked={skipExistingByTitle}
+                        onChange={(e) => setSkipExistingByTitle(e.target.checked)}
+                        className="accent-[#8d64cc]"
+                      />
+                      <span>Skip duplicate story titles</span>
+                    </label>
+                  </div>
+
+                  {/* Direct JSON Editor / Paste Box */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label
+                        htmlFor="admin-json-textarea"
+                        className="text-xs font-medium text-[#c2c6d4]"
+                      >
+                        JSON Payload (Upload file above or paste JSON directly)
+                      </label>
+                      <span className="text-xs text-[#8c92a6] tabular-nums">
+                        {parsedJsonPreview.stories.length} valid{' '}
+                        {parsedJsonPreview.stories.length === 1 ? 'story' : 'stories'} ·{' '}
+                        {parsedJsonPreview.totalChapters}{' '}
+                        {parsedJsonPreview.totalChapters === 1 ? 'branch' : 'branches'}
+                      </span>
+                    </div>
+                    <textarea
+                      id="admin-json-textarea"
+                      rows={6}
+                      disabled={importingJson}
+                      value={rawJsonText}
+                      onChange={(e) => {
+                        setRawJsonText(e.target.value);
+                        setImportSummary(null);
+                      }}
+                      placeholder='[{"title": "Story Title", "image": "https://...", "category": "Drama", "branches": [{"title": "Part 1", "content": "..."}]}]'
+                      className="w-full bg-[#141621] font-mono text-xs text-white placeholder-[#6f758b] px-3.5 py-3 rounded-lg border border-[#2a2e42] focus:border-[#8d64cc] focus:outline-none leading-relaxed resize-y"
+                    />
+                  </div>
+
+                  {/* Live Progress Bar During 600+ Upload */}
+                  {importProgress && (
+                    <div className="bg-[#141621] border border-[#2a2e42] rounded-xl p-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-white">
+                          {importingJson
+                            ? `Uploading stories to Firestore (${importProgress.processed} / ${importProgress.total})...`
+                            : `Finished processing ${importProgress.processed} / ${importProgress.total} stories`}
+                        </span>
+                        <span className="text-[#b897ee] font-semibold tabular-nums">
+                          {importProgress.total > 0
+                            ? Math.round((importProgress.processed / importProgress.total) * 100)
+                            : 0}
+                          %
+                        </span>
+                      </div>
+                      <div className="w-full h-2 bg-[#1d202e] rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#3b82f6] transition-all duration-150"
+                          style={{
+                            width: `${
+                              importProgress.total > 0
+                                ? Math.min(
+                                    100,
+                                    Math.round(
+                                      (importProgress.processed / importProgress.total) * 100
+                                    )
+                                  )
+                                : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4 text-[11px] text-[#9ea4b8] tabular-nums">
+                        <span>
+                          Uploaded: <strong className="text-[#8de0b6]">{importProgress.uploaded}</strong>
+                        </span>
+                        <span>
+                          Skipped Duplicates:{' '}
+                          <strong className="text-white">{importProgress.skippedDuplicates}</strong>
+                        </span>
+                        <span>
+                          Failed: <strong className="text-[#f28b9c]">{importProgress.failed}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Parse Warnings / Skipped Items */}
+                  {parsedJsonPreview.skippedReasons.length > 0 && (
+                    <div
+                      role="alert"
+                      className="bg-[#2a1922] border border-[#5a293a] rounded-xl p-4 text-xs text-[#f7a8b6] space-y-1 max-h-36 overflow-y-auto"
+                    >
+                      <p className="font-semibold text-white">
+                        {parsedJsonPreview.skippedCount} item(s) could not be parsed:
+                      </p>
+                      {parsedJsonPreview.skippedReasons.slice(0, 10).map((reason, idx) => (
+                        <p key={idx}>{reason}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Failure Details from Upload */}
+                  {importSummary && importSummary.failureMessages.length > 0 && (
+                    <div
+                      role="alert"
+                      className="bg-[#2a1922] border border-[#5a293a] rounded-xl p-4 text-xs text-[#f7a8b6] space-y-1 max-h-36 overflow-y-auto"
+                    >
+                      <p className="font-semibold text-white">
+                        {importSummary.failureMessages.length} story upload error(s):
+                      </p>
+                      {importSummary.failureMessages.slice(0, 10).map((msg, idx) => (
+                        <p key={idx}>{msg}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Parsed Preview Table & Action Buttons */}
+                  {parsedJsonPreview.stories.length > 0 && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#141621] border border-[#262a3d] rounded-lg px-4 py-3">
+                        <div className="text-xs text-[#d5d9e6] space-y-0.5">
+                          <p>
+                            Ready to upload{' '}
+                            <strong className="text-white">
+                              {parsedJsonPreview.stories.length}
+                            </strong>{' '}
+                            individual{' '}
+                            {parsedJsonPreview.stories.length === 1 ? 'story' : 'stories'} (
+                            {parsedJsonPreview.totalChapters} total branches/parts) across{' '}
+                            <strong className="text-white">
+                              {parsedJsonPreview.detectedCategories.length}
+                            </strong>{' '}
+                            {parsedJsonPreview.detectedCategories.length === 1
+                              ? 'category'
+                              : 'categories'}
+                            .
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          {importingJson ? (
+                            <button
+                              type="button"
+                              onClick={handleStopBulkImport}
+                              className="px-4 py-2 text-xs font-medium bg-[#7f1d1d] hover:bg-[#991b1b] text-white rounded-lg transition-colors cursor-pointer"
+                            >
+                              Stop Upload
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleStartBulkImport()}
+                              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-medium bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                              <span>
+                                Upload {parsedJsonPreview.stories.length}{' '}
+                                {parsedJsonPreview.stories.length === 1 ? 'Story' : 'Stories'} to
+                                Firestore
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Preview first 10 parsed stories */}
+                      <div className="bg-[#141621] border border-[#262a3d] rounded-xl divide-y divide-[#222638] max-h-80 overflow-y-auto">
+                        {parsedJsonPreview.stories.slice(0, 10).map((item, idx) => (
+                          <div
+                            key={`${item.title}-${idx}`}
+                            className="p-3.5 flex items-start justify-between gap-3"
+                          >
+                            <div className="flex items-start gap-3 min-w-0">
+                              {item.coverImageURL ? (
+                                <img
+                                  src={item.coverImageURL}
+                                  alt=""
+                                  referrerPolicy="no-referrer"
+                                  className="w-12 h-9 rounded object-cover bg-[#1d202e] shrink-0"
+                                />
+                              ) : (
+                                <div className="w-12 h-9 rounded bg-[#1d202e] border border-[#282c3f] flex items-center justify-center shrink-0">
+                                  <ImageIcon className="w-3.5 h-3.5 text-[#5f657c]" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-white truncate">
+                                  {idx + 1}. {item.title}
+                                </p>
+                                <p className="text-[11px] text-[#9ea4b8] line-clamp-1">
+                                  {item.excerpt}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="inline-block px-2 py-0.5 text-[11px] bg-[#1d202e] text-[#c7b3ec] rounded">
+                                {item.category}
+                              </span>
+                              <p className="mt-0.5 text-[11px] text-[#8c92a6] tabular-nums">
+                                {item.chapters.length}{' '}
+                                {item.chapters.length === 1 ? 'branch' : 'branches'}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                        {parsedJsonPreview.stories.length > 10 && (
+                          <div className="p-3 text-center text-xs text-[#8c92a6]">
+                            + {parsedJsonPreview.stories.length - 10} more stories ready in this
+                            file
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               </section>

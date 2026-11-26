@@ -367,12 +367,12 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && (
-          (
+          isAdmin()
+          || (
             incoming().views == 0
             && incoming().authorVerified == false
             && exists(/databases/$(database)/documents/users/$(request.auth.uid))
           )
-          || isAdmin()
         );
       allow update: if isVerifiedUser()
         && isValidId(storyId)
@@ -454,16 +454,16 @@ service cloud.firestore {
           && incoming().status == parentStoryAfter(storyId).status
           && (
             (
-              incoming().authorId == request.auth.uid
-              && parentStoryAfter(storyId).authorId == request.auth.uid
+              isAdmin()
+              && (
+                incoming().authorId == request.auth.uid
+                || incoming().authorId == parentStoryAfter(storyId).authorId
+              )
             )
             ||
             (
-              isAdmin()
-              && (
-                incoming().authorId == parentStoryAfter(storyId).authorId
-                || incoming().authorId == request.auth.uid
-              )
+              incoming().authorId == request.auth.uid
+              && parentStoryAfter(storyId).authorId == request.auth.uid
             )
           );
         allow update: if isVerifiedUser()

@@ -327,4 +327,95 @@ test('parseSeoKeywords, normalizeSeoKeywords, and validateSeoInput handle comma-
   assert.equal(emptyKeywords.length, 1);
 });
 
+test('parseJsonStoriesPayload parses stories with title, image, nested story branches, and 650+ records', async () => {
+  const { parseJsonStoriesPayload, sanitizeImportedImageUrl } = await import('./storyUtils');
+
+  // Image URL upgrade and sanitization
+  assert.equal(
+    sanitizeImportedImageUrl('http://example.com/cover.jpg'),
+    'https://example.com/cover.jpg'
+  );
+  assert.equal(sanitizeImportedImageUrl('javascript:alert(1)'), '');
+  assert.equal(
+    sanitizeImportedImageUrl([{ url: 'https://example.com/first.png' }]),
+    'https://example.com/first.png'
+  );
+
+  // Nested branches, string arrays, and root story text
+  const mixedPayload = JSON.stringify({
+    stories: [
+      {
+        title: 'The Cinnamon Coast',
+        image: 'http://example.com/coast.jpg',
+        category: 'Folklore',
+        branches: [
+          {
+            title: 'Branch 1: The Old Harbor',
+            image: 'https://example.com/harbor.jpg',
+            content:
+              'Ships waited beyond the coral reef while lanterns flickered along the wet timber pier.',
+            subBranches: [
+              {
+                title: 'Branch 1A: Midnight Bell',
+                text: 'At midnight the bronze bell rang twice across the quiet water of the bay.',
+              },
+            ],
+          },
+          {
+            name: 'Branch 2: Morning Tide',
+            body: 'When dawn broke, only a single wooden chest remained on the sandy shore.',
+          },
+        ],
+      },
+      {
+        name: 'Short Branch Padding Check',
+        img: 'javascript:evil()',
+        story_branches: ['Short text 1', 'Short text 2'],
+      },
+    ],
+  });
+
+  const parsedMixed = parseJsonStoriesPayload(mixedPayload, {
+    defaultCategory: 'Drama',
+    defaultStatus: 'published',
+  });
+
+  assert.equal(parsedMixed.stories.length, 2);
+  assert.equal(parsedMixed.skippedCount, 0);
+  assert.equal(parsedMixed.stories[0].title, 'The Cinnamon Coast');
+  assert.equal(parsedMixed.stories[0].coverImageURL, 'https://example.com/coast.jpg');
+  assert.equal(parsedMixed.stories[0].chapters.length, 3);
+  assert.equal(parsedMixed.stories[0].chapters[0].title, 'Branch 1: The Old Harbor');
+  assert.equal(parsedMixed.stories[0].chapters[1].title, 'Branch 1A: Midnight Bell');
+  assert.equal(parsedMixed.stories[0].chapters[2].title, 'Branch 2: Morning Tide');
+
+  // Second story has unsafe image stripped and short branch content padded to >= 20 chars
+  assert.equal(parsedMixed.stories[1].coverImageURL, '');
+  assert.equal(parsedMixed.stories[1].chapters.length, 2);
+  assert.ok(parsedMixed.stories[1].chapters[0].content.length >= 20);
+
+  // Stress test with 650 stories in one JSON file
+  const largeArray = Array.from({ length: 650 }, (_, idx) => ({
+    title: `Imported Story #${idx + 1}`,
+    image: `https://example.com/images/story-${idx + 1}.jpg`,
+    category: idx % 2 === 0 ? 'Drama' : 'Mystery',
+    branches: [
+      {
+        title: 'Part 1: Beginning',
+        content: `This is the opening branch for imported story number ${idx + 1} with full narrative content.`,
+      },
+      {
+        title: 'Part 2: Continuation',
+        content: `This is the second branch for imported story number ${idx + 1} continuing the narrative.`,
+      },
+    ],
+  }));
+
+  const parsedLarge = parseJsonStoriesPayload(JSON.stringify(largeArray));
+  assert.equal(parsedLarge.stories.length, 650);
+  assert.equal(parsedLarge.totalChapters, 1300);
+  assert.equal(parsedLarge.skippedCount, 0);
+});
+
+
 
