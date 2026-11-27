@@ -235,6 +235,14 @@ function WalkathawaApp() {
       return;
     }
 
+    if (activeView === 'read' && selectedStoryId) {
+      applySeoSettingsToDocument(seoSettings, {
+        canonicalUrl: `${origin}${buildStoryPath(selectedStoryId)}`,
+        robots: 'index, follow',
+      });
+      return;
+    }
+
     if (activeView === 'stories' && selectedCategory !== 'All') {
       applySeoSettingsToDocument(seoSettings, {
         title: `${selectedCategory} Stories — walkathawa`,
@@ -248,7 +256,7 @@ function WalkathawaApp() {
       canonicalUrl: `${origin}/`,
       robots: 'index, follow',
     });
-  }, [seoSettings, isAdminRoute, activeView, selectedStory, selectedCategory]);
+  }, [seoSettings, isAdminRoute, activeView, selectedStory, selectedStoryId, selectedCategory]);
 
   const handleCategoryChange = useCallback((cat: StoryCategory | 'All') => {
     setSelectedCategory(cat);
